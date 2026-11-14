@@ -92,6 +92,7 @@ GPL ones and from those without a license, only ideas.
 | [Mesa environment variables](https://docs.mesa3d.org/envvars.html) | MIT (docs) | RADV RGP capture: `MESA_VK_TRACE=rgp`, `MESA_VK_TRACE_TRIGGER`, `MESA_VK_TRACE_FRAME` |
 | [Switchbrew](https://switchbrew.org/w/index.php?title=Category%3AServices) | CC BY-SA | The "Switch 2: GSV / VI2 / Host1x / Nvkernel services" pages and the `[S2]` commands of `appletOE`. Only needed if something of the translated SDK calls them |
 | [Axiom4912/Axiom](https://github.com/Axiom4912/Axiom), [hffgzktbcc-blip/ounce-core](https://github.com/hffgzktbcc-blip/ounce-core) | — / MIT | Discarded: a README without code; a research runtime that only runs Switch 1 homebrew |
+| [seighttt/droplet](https://gitlab.com/seighttt/droplet), branch `server`: Reservoir (11/2026) | AGPL-3.0 | Ideas only: what NPLN's online services answer Mario Kart World (sign-in, friends, rooms, matchmaking, Gamesync and its race referee), written down first as a description of the protocol. `runtime/srv/` is written from that description and from the game's own requests (its room write, logged), with no code of Reservoir |
 
 ### Reference copies (`scratchpad/ext/`, cloned again when missing)
 

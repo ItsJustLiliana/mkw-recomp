@@ -2,6 +2,7 @@
 //
 //   mkw [--exefs DIR] [--romfs DIR|FILE.nup|FILE.nx] [--nup FILE] [--profile DIR] <mode>
 //   mkw --unpack PACKAGE DEST [PREFIX...]   a .nup or .nx dump's files written out (sdk/fs/pack_unpack.c)
+//   mkw --server [--host ADDR]... [--seconds S]   the online server built in (runtime/srv), its own process
 //     --selftest        layout, dispatch table and host-function registry; needs no game files
 //     --replay DIR      a frame capture (MKW_CAPTURE, runtime/gfx/cap) replayed through the back end, no game
 //     --probe-loader    load and relocate the modules, check them against the measured 1.2.1 values
@@ -42,6 +43,7 @@
 #include "players.h"
 #include "platform/platform.h"
 #include "sha256.h"
+#include "srv.h"
 #include "ui/launcher/launcher.h"
 
 #define MAX_MODULES 16
@@ -610,6 +612,8 @@ int main(int argc, char **argv) {
     // --unpack PACKAGE DEST [PREFIX...]: a packed dump's files written out (sdk/fs/pack_unpack.c), for the setup; first,
     // as the setup runs it before the game code exists (no address space, launcher or log file needed)
     if (argc >= 2 && !strcmp(argv[1], "--unpack")) return pack_unpack_main(argc - 2, argv + 2);
+    // --server: the online server (runtime/srv/srv.h), with no game, window or address space of its own
+    if (argc >= 2 && !strcmp(argv[1], "--server")) return srv_main(argc - 2, argv + 2);
     if (want_launcher(argc, argv)) return run_launcher(argc, argv);
 #ifdef __linux__
     // MKW_ALLOW_PTRACE=1: let a debugger attach (tools/run/stacks.py) under yama ptrace_scope 1, without root.
