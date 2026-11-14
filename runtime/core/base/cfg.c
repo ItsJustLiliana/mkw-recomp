@@ -45,14 +45,14 @@ static const char *const known[] = {
     "LOCALE", "MEMORY", "MESH_COMPUTE", "MENU_LANG", "MENU_TEST",
     "MENU_TEST_DIR", "MENU_TEST_SET", "MINIMAL_LAYOUT", "MIRROR_GAP", "MODS", "MODS_ACK", "MODS_PLAYED", "MOTION",
     "MOUSE_SENS", "PLAYER",   // PLAYER: the launcher's choice (core/base/players.h), no row: Reset all leaves it
-    "ONE_PER_CORE", "OPERATION_MODE", "PAD_LAYOUT", "PERF_OVERLAY", "PERF_SLOW_MS", "PICTURE_FIT", "PIPELINE_CACHE", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SKIP", "PIPE_STALL", "PIPE_SYNC", "PIPE_TRACE", "POOL_SPILL", "PIPE_WAIT", "PIPE_WORKERS",
+    "ONE_PER_CORE", "OPERATION_MODE", "PAD_LAYOUT", "PERF_OVERLAY", "PERF_SLOW_MS", "PICTURE_FIT", "PIPELINE_CACHE", "PIPE_MEMO", "PIPE_PREBUILD", "PIPE_SKIP", "PIPE_STALL", "PIPE_SYNC", "PIPE_TRACE", "POOL_SPILL", "PIPE_WAIT", "PIPE_WORKERS", "NETWORK", "ONLINE", "ONLINE_CA", "ONLINE_SERVER",
     "PROBE", "PROFILE", "PROFILE_CHAINS", "PROFILE_DIR", "PROFILE_FRAMES",
     "PROFILE_MAIN", "PROFILE_RENDER", "PUSH_SKIP", "PUSH_STAGE", "RDOC", "RDOC_DIR", "RDOC_DLL", "REEXEC",
     "BIND_XF", "REG_LATE", "REG_QUEUED", "REPLAY_ASYNC", "USNAP_CMP",
     "REPLAY_CHECK", "RESOLUTION", "RESOLVE_CHECK", "ROMFS", "RTSTATS", "ROMFS_MODS", "ROMFS_PATCHES",
     "RUMBLE", "RUMBLE_CURVE", "RUMBLE_STRENGTH", "RUMBLE_TRIGGERS",
     "SHADER_MEMO", "SHADOW_SIZE", "SHARED_FONTS", "SHARPNESS", "SHORTCUT_ASKED", "SHOTS", "SHOTS_DIR", "SHOTS_FULL", "SPARSE_IMAGES", "SPARSE_MIB", "SPARSE_NO_BUFFER", "SPIN", "SPIN_HANDOFF_US", "SPLIT_DRAWS", "SPLIT_US", "STICK_DEADZONE", "SWITCH2", "SWKBD_ANSWER",
-    "SKIP_PROGRAMS", "SWKBD_TEST", "TEX_ALIAS", "TEX_MEMO", "TEX_QUALITY", "TEX_RELEASED_MIB", "TIMER_1MS", "TRACE", "TURBO", "TURBO_SPEED", "SKIP_MOVIES", "SEED", "UNLOCK_ALL", "QUICK_RACE", "FREEZE_KEYS", "QUALITY", "TRACE_UBO", "TRACE_UBO_OUT", "UBO_SNAPSHOT", "UPSCALER", "VRR", "VK_DYN_VERTEX", "VK_NO_FLOAT64",
+    "SKIP_PROGRAMS", "SWKBD_TEST", "TEX_ALIAS", "TEX_MEMO", "TEX_QUALITY", "TEX_RELEASED_MIB", "TIMER_1MS", "TRACE", "TURBO", "TURBO_SPEED", "SKIP_MOVIES", "SEED", "UNLOCK_ALL", "QUICK_RACE", "FREEZE_KEYS", "QUALITY", "TRACE_UBO", "TRACE_UBO_OUT", "UBO_SNAPSHOT", "UPSCALER", "VRR", "VK_DYN_VERTEX", "VK_NO_FLOAT64", "SERVER_HOST",
     "VK_PRESENT", "VK_RECORDER", "VK_SSBO_ALIGN", "VK_SUBGROUP", "VK_SUBGROUP_PIN", "VK_TEX_POOL_MIN", "VK_VALIDATION", "VOLUME", "VRAM_HEADROOM", "VRAM_LOG", "VRAM_MARGIN", "VS_OUTS",
     "UPDATE_AS", "UPDATE_CHECK", "UPDATE_REPO", "WINDOW_SIZE", "ZSTD_CHECK", "ZSTD_NATIVE",
 };
@@ -85,6 +85,7 @@ static const struct { const char *key, *section; } sections[] = {
     {"QUICK_RACE", "hacks"}, {"CLASSIC_GP", "hacks"}, {"MODS", "launcher"}, {"MODS_ACK", "launcher"}, {"MODS_PLAYED", "launcher"},
     {"UPDATE_CHECK", "launcher"}, {"DISCORD", "launcher"}, {"GAME_DIR", "launcher"}, {"PLAYER", "launcher"},
     {"SHORTCUT_ASKED", "launcher"},
+    {"ONLINE", "online"}, {"ONLINE_SERVER", "online"}, {"ONLINE_CA", "online"}, {"NETWORK", "online"}, {"SERVER_HOST", "online"},
 };
 
 // The settings the menu shows: the value in effect when the key is unset, and what the key accepts. The only place a
@@ -128,6 +129,9 @@ static const CfgMeta metas[] = {
     {"MODS_ACK", "0", "0|1", LIVE},   // the player ticked the Mods page's "I understand" once
     {"MODS_PLAYED", "", NULL, LIVE},   // the mods of the last start: a new set backs the save up first (launcher)
     {"GAME_DIR", "", NULL, RESTART},   // unset: beside the executable; the launcher remembers the selection there
+    // Online (net_online.h): off by default; read again at each change; the start screen's Online page sets them
+    {"ONLINE", "0", "0|1", LIVE}, {"ONLINE_SERVER", "", NULL, LIVE}, {"ONLINE_CA", "", NULL, LIVE},
+    {"NETWORK", "auto", "auto|home|tailscale", LIVE}, {"SERVER_HOST", "0", "0|1", LIVE},
     // Advanced: scheduling
     {"ASYNC_PREEMPT", "1", "0|1|2", RESTART}, {"REPLAY_ASYNC", "1", "0|1", RESTART},
     {"FREE_CORES", "0", "0|1", RESTART}, {"TIMER_1MS", "1", "0|1", RESTART},

@@ -20,6 +20,7 @@
 
 #include "cfg.h"
 #include "host.h"
+#include "net_online.h"
 #include "ov.h"
 
 static int lan_only(struct in_addr a) { return ov_lan_only(ntohl(a.s_addr)); }
@@ -54,9 +55,10 @@ static uint32_t route_to(uint32_t peer) {
 }
 
 // ---- the LAN address nifm reports (ov_net.c): MKW_LAN_IP; else, with MKW_LAN_PEERS (a virtual LAN without
-// broadcast), the address on the route to the first of them; else the best interface that is up with a local network
-// address (lan_only, not loopback), read from the system's interface list (nothing is sent), with its mask. Pia builds
-// its broadcast from both. An address of Tailscale's 100.64.0.0/10 gets that whole range as its mask: Tailscale gives each PC a /32 that
+// broadcast), the address on the route to the first of them; else the address of the network MKW_NETWORK names (home,
+// tailscale: the Online page's choice); else the best interface that is up with a local network address (lan_only,
+// not loopback), read from the system's interface list (nothing is sent), with its mask. Pia builds its broadcast from
+// both. An address of Tailscale's 100.64.0.0/10 gets that whole range as its mask: Tailscale gives each PC a /32 that
 // holds no other PC, and with the range the others are on the same network for Pia (a local network below, not a /32).
 // Best first (a tie keeps the first in the system's order):
 //   3  a network with the default route: the one the PC reaches its router and the other PCs through
@@ -121,6 +123,13 @@ int ov_lan_address(uint8_t ip[4], uint8_t mask[4]) {
     uint32_t first;
     if (!want.s_addr && ov_lan_peer_first(&first) && !(want.s_addr = route_to(first)))
         rt_log("nifm: no route to the first of MKW_LAN_PEERS");
+    if (!want.s_addr && strcmp(net_network(), "auto")) {   // MKW_NETWORK home or tailscale: that network's address
+        NetAddrs na;
+        net_addrs(&na);
+        const char *ip = net_network_address(&na);
+        if (*ip) inet_pton(AF_INET, ip, &want);
+        else rt_log("nifm: the %s network is not up", net_network());
+    }
 #ifdef _WIN32
     WSADATA wsa;
     if (WSAStartup(MAKEWORD(2, 2), &wsa)) return -1;

@@ -12,7 +12,7 @@
 // 5173d27, MIT, Copyright (c) 2026 Revivedx and the Savage Wind Recomp contributors).
 //
 // Test hooks: MKW_LAUNCHER_SHOT=<frame>[:<page>[:<tab>[:<scroll 0..1>]]] saves that frame as MKW_LAUNCHER_SHOT_OUT (default
-// launcher.png) and quits; page main, settings (tab 0..6), files, mods, players or tools. The user's input is ignored while it
+// launcher.png) and quits; page main, settings (tab 0..6), files, mods, players, tools or online. The user's input is ignored while it
 // runs.
 // MKW_LAUNCHER_SETUP=<folder>[:link] starts the setup from that folder at once, on the game files page.
 // MKW_LAUNCHER_MODS_PICK=<zip|folder> picks it on the Mods page, as its dialogs do; MKW_LAUNCHER_MODS_TOGGLE=<mod>
@@ -46,6 +46,7 @@
 #include "ui/launcher/launcher_logo.h"
 #include "ui/launcher/launcher_look.h"
 #include "ui/launcher/launcher_players.h"
+#include "ui/launcher/launcher_online.h"
 #include "ui/launcher/launcher_setup.h"
 #include "ui/launcher/launcher_tools.h"
 #include "ui/launcher/launcher_lastrun.h"
@@ -67,7 +68,7 @@ extern const char rt_port_version[];
 void app_icon_set(SDL_Window *w);   // build/obj/rt/app_icon.c, drawn by tools/build/icon.py
 }
 
-enum Page { PAGE_MAIN, PAGE_SETTINGS, PAGE_FILES, PAGE_MODS, PAGE_PLAYERS, PAGE_TOOLS };
+enum Page { PAGE_MAIN, PAGE_SETTINGS, PAGE_FILES, PAGE_MODS, PAGE_PLAYERS, PAGE_TOOLS, PAGE_ONLINE };
 
 static struct {
     SDL_Window *win;
@@ -213,6 +214,7 @@ static void parse_test(void) {
                   : !strncmp(p, "mods", 4)                                              ? PAGE_MODS
                   : !strncmp(p, "players", 7)                                           ? PAGE_PLAYERS
                   : !strncmp(p, "tools", 5)                                             ? PAGE_TOOLS
+                  : !strncmp(p, "online", 6)                                            ? PAGE_ONLINE
                                                                                         : PAGE_MAIN;
     const char *t = strchr(p, ':');
     L.shot_tab = t ? atoi(t + 1) : 0;
@@ -651,18 +653,24 @@ static void page_main(float w, float h) {
     }
     intro_apply(dl, v0, intro(3));
     v0 = dl->VtxBuffer.Size;
-    if (menu_item(menu_text(UI_LAUNCH_FILES), cw, true)) L.page = PAGE_FILES;
+    if (menu_item(menu_text(UI_LAUNCH_ONLINE), cw, true)) {   // ui/launcher/launcher_online.cpp
+        L.page = PAGE_ONLINE;
+        online_opened();
+    }
     intro_apply(dl, v0, intro(4));
     v0 = dl->VtxBuffer.Size;
-    if (menu_item(menu_text(UI_LAUNCH_MODS), cw, true)) L.page = PAGE_MODS;
+    if (menu_item(menu_text(UI_LAUNCH_FILES), cw, true)) L.page = PAGE_FILES;
     intro_apply(dl, v0, intro(5));
     v0 = dl->VtxBuffer.Size;
     if (menu_item(menu_text(UI_LAUNCH_TOOLS), cw, true)) L.page = PAGE_TOOLS;
     intro_apply(dl, v0, intro(6));
+    v0 = dl->VtxBuffer.Size;
+    if (menu_item(menu_text(UI_LAUNCH_SHORTCUT), cw, true)) make_shortcut();
+    intro_apply(dl, v0, intro(7));
     ImGui::Dummy(ImVec2(0, 28 * s));
     v0 = dl->VtxBuffer.Size;
     if (menu_item(menu_text(UI_LAUNCH_QUIT), cw, true)) L.result = LAUNCHER_QUIT;
-    intro_apply(dl, v0, intro(7));
+    intro_apply(dl, v0, intro(8));
     ImGui::PopStyleVar();
     v0 = dl->VtxBuffer.Size;
     if (files && !shortcut_asked()) {
@@ -765,6 +773,16 @@ static void page_settings(float w, float h) {
     bool back = panel_back_row();
     if (!settings_modal() && back_pressed()) back = true;
     settings_tabs_done();
+    ImGui::End();
+    if (back) go_main();
+}
+
+// ---- the Online page (launcher_online.cpp): the server, the friend code, friend requests and friends
+static void page_online(float w, float h) {
+    float bottom = panel_begin("##online", UI_ONLINE_TITLE, w, h);
+    online_page(L.scale, bottom);
+    bool back = panel_back_row();
+    if (back_pressed() && !ImGui::GetIO().WantTextInput) back = true;
     ImGui::End();
     if (back) go_main();
 }
@@ -1647,8 +1665,10 @@ extern "C" int launcher_run(void) {
             settings_select(L.shot_tab);
             settings_opened();
         }
+        if (L.page == PAGE_ONLINE) online_opened();
     }
     L.tools = setup_available(L.exe_dir);
+    if (!L.shot_at) online_host_boot();   // hosting: the server starts with the start screen, stops with the game
     if (!rt_game_present() && !L.shot_at) L.page = PAGE_FILES;
     pads_refresh();
     char state[PLAT_PATH_MAX * 3];

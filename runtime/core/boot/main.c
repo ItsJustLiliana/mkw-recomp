@@ -40,6 +40,7 @@
 #include "gamelib.h"
 #include "hacks.h"
 #include "host.h"
+#include "net_online.h"
 #include "players.h"
 #include "platform/platform.h"
 #include "sha256.h"
@@ -629,6 +630,7 @@ int main(int argc, char **argv) {
     // Timed guest waits (kernel.c block_inner) sleep in whole milliseconds; at the default 15.6 ms tick a 1 ms wait
     // costs a full tick. MKW_TIMER_1MS=0 keeps the default for comparison.
     if (cfg_bool("MKW_TIMER_1MS")) plat_timer_1ms();
+    net_host_boot();   // MKW_SERVER_HOST without the start screen: this PC's server, until the game closes
     cfg = (RtConfig){.exefs = rt_default_exefs, .romfs = rt_default_romfs, .profile = rt_default_profile,
                      .gpu = cfg_get("MKW_GPU")};
     portable_paths(&cfg);   // command-line paths below still win
