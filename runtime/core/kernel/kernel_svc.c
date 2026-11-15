@@ -187,7 +187,10 @@ int kern_svc(Cpu *c, uint32_t imm) {
         RtThread *t = h_get((uint32_t)x[2], O_THREAD);
         x[0] = t ? R_OK : R_BAD_HANDLE;
         if (t) {
-            x[1] = (uint64_t)(uint32_t)t->core;
+            // The guest-visible ideal core must be inside the mask. If the scheduler hint (t->core) is
+            // outside, report -1 (don't care) so a copied (core, mask) pair is never inconsistent.
+            int32_t visible_core = (t->mask && (t->core >= 0) && !(t->mask >> t->core & 1)) ? -1 : t->core;
+            x[1] = (uint64_t)(uint32_t)visible_core;
             x[2] = t->mask;
         }
         unlock();
@@ -203,15 +206,6 @@ int kern_svc(Cpu *c, uint32_t imm) {
         int keep = core == -3 && t ? t->core : core;   // no update: the ideal core stays and must be in the mask
         uint32_t bad = (mask & ~APP_MASK) || core < -3 || core >= NCORE ? R_INVALID_CORE
                        : !mask || (keep >= 0 && !(mask >> keep & 1)) ? R_INVALID_COMBINATION : R_OK;
-        // An ideal core outside a valid mask: the online mode's network thread (main+0x14fe9f8) asks core 0 with mask
-        // 0x4 and aborts on the refusal, which it does not on a console. The mask wins, its first core is the ideal one.
-        if (t && bad == R_INVALID_COMBINATION && mask) {
-            static int n;
-            if (n++ < 4)
-                rt_log("kernel: SetThreadCoreMask(core %d, mask %#llx): ideal core outside the mask, core %d taken", core,
-                       (unsigned long long)mask, __builtin_ctzll(mask));
-            core = __builtin_ctzll(mask), bad = R_OK;
-        }
         if (t && bad) {
             x[0] = bad;
             unlock();
