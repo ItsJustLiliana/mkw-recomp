@@ -26,3 +26,7 @@ nghttp2 (MIT) and Mbed TLS (Apache-2.0), are fetched and pinned by `tools/build/
 | `srv_udp.h`, `srv_udp.c` | UDP answers as pure functions of the datagram and its sender: STUN binding (RFC 5389 and 3489), Pia's NAT check (a sender on 127.x is told the server's own address) |
 
 Tests: `tests/test_srv.py` (`tests/c/t_srv.c`; with `MKW_SRV_EXE`, the built executable over UDP and TLS + HTTP/2).
+
+On Windows, `srv_main.c` creates `Local\MKWRecompServerStop-<pid>` and writes its PID under the data directory.
+`net_host.c` signals that event for a normal F1 Stop, including when the launcher owns the process. The loop then
+closes sockets and flushes the store before deleting the PID file. A PID read from disk is never used to kill a process.

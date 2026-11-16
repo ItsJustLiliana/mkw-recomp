@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Players online and their presence (srv_presence.h), as the protocol description's "Presence and friends" says.
 // Online: a stream open, or a call less than 120 s ago before any stream, or less than 15 s since the last stream
 // closed. KeepAlive: each presence change is stored (a field mask names the attributes that changed; the others stay)

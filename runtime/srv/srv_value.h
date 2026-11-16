@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The game's attribute values (MapValue) as a tree the server can change: Gamesync documents (srv_docs.c), ticket and
 // session attributes (srv_session.c), the referee's results (srv_referee.c). Decoding normalises the way the game reads
 // values back (the protocol description, "MapValue"): int32, int64 and a Timestamp's seconds become one integer kind

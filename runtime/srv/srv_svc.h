@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's services and the gRPC layer (srv_h2.c) between them and the network: a table of the methods the
 // game calls (srv_methods.c), and what a service may do on a call. Everything runs on the server's single thread.
 #pragma once

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's accounts and friendships (srv_store.h). Small tables in memory, written whole to their files
 // after a change: a new account or friendship at once (the server ends with the game, killed with it), the "last seen"
 // kind of change within a second.

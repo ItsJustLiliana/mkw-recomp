@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The friends API next to the game's port (gRPC port + 1, 8444): HTTPS/1.1 for our runtime's Online page, not for the
 // game. GET /v1/ca.der (the CA, no check), GET /v1/friends, POST /v1/friends/<request|accept|decline|cancel|remove>.
 #pragma once

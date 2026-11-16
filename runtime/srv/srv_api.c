@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The friends API (srv_api.h), as the protocol description's "Friends HTTPS API" says: TLS 1.2+, HTTP/1.1 with
 // keep-alive, one request at a time, JSON replies whose arrays hold flat objects with the player's own "name" before
 // them (our runtime's JSON reader is minimal), {"error": "..."} on failure. 60 requests per address and minute.

@@ -5,6 +5,7 @@ end's regression test runs over captures instead (`tools/test/`).
 
 | File | What it checks |
 |---|---|
+| `test_net_invite.py` | The production F1 server invite codec: routing round trips, private-address limits, typo detection and malformed codes |
 | `test_lan_peers.py` | Compiles the production VPN peer helpers: local-address filtering, broadcast-only selection, bounded peer counts, settings reload and loopback binds; no game or GPU |
 | `test_warp32.py` | Executes the translator's actual shuffle/ballot helpers and emitted signed/unsigned reductions as C++ on synthetic 32/64/128-lane subgroups, with distinct values per logical warp and partially active masks |
 | `test_spirv_images.py` | Integer image variants of synthetic compute shaders through the production patcher (`c/t_spirv_images.c`): signed and unsigned storage images, separate image/sampler construction, input preservation and actionable failure reasons; optional SPIR-V validation |

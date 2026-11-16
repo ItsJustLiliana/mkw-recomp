@@ -31,6 +31,9 @@ PORT = 18443  # not 8443: a game's own server may be running here
 @pytest.fixture(scope="module")
 def t_srv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    bundled = ROOT / "build/win/llvm-mingw/bin/x86_64-w64-mingw32-clang.exe"
+    if not cc and bundled.exists():
+        cc = str(bundled)
     if not cc:
         pytest.skip("no C compiler")
     exe = tmp_path_factory.mktemp("srv") / "t_srv.exe"
@@ -71,8 +74,31 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
         srv.kill()
         pytest.fail("server not listening")
     yield data
-    srv.kill()
-    srv.wait()
+    if os.name == "nt":
+        # F1 uses this event to stop a server owned by the launcher. Check final store flush and cleanup.
+        import ctypes
+        from ctypes import wintypes
+
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenEventW.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.LPCWSTR]
+        kernel.OpenEventW.restype = wintypes.HANDLE
+        kernel.SetEvent.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        event = kernel.OpenEventW(2, False, f"Local\\MKWRecompServerStop-{srv.pid}")
+        try:
+            assert event and kernel.SetEvent(event), "server stop event missing"
+            assert srv.wait(timeout=10) == 0
+            assert "stopped" in (data / "logs/server.log").read_text()
+            assert not (data / "pid").exists()
+        finally:
+            if event:
+                kernel.CloseHandle(event)
+            if srv.poll() is None:
+                srv.kill()
+                srv.wait()
+    else:
+        srv.kill()
+        srv.wait()
 
 
 def test_srv_stun_over_udp(server: Path) -> None:

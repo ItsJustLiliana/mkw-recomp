@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Gamesync (the protocol description, "Gamesync"): the per-session document store the game's peer-to-peer layer (Pia)
 // reads the session from. IssueToken / RefreshToken bind a token to (game session, player); GetDocument; WriteDocuments
 // applies a request's writes as one batch (srv_docs.c), keeps its deferred writes, lets the referee answer

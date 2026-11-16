@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's TLS (Mbed TLS): its certificates, made on this PC the first time and kept, and the two
 // configurations it serves with: HTTP/2 ("h2") for the game's gRPC port, HTTP/1.1 for the friends API next to it.
 #pragma once

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // A game session's Gamesync documents (srv_docs.h).
 #include "srv_docs.h"
 

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's process (srv.h): one thread, one poll loop over every socket, so no lock anywhere. UDP: the STUN
 // answers Pia asks for on 3478 and 3479, its NAT check on 10025, 10125 and 33334. TCP: the game's gRPC port (8443 unless
 // --port), TLS + HTTP/2 (srv_h2.c).
@@ -11,6 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <wchar.h>
 
 #include "platform/platform.h"
 #include "srv.h"
@@ -263,11 +265,24 @@ int srv_main(int argc, char **argv) {
             listen_on(hosts[h], UDP_PORTS[k].port, 1, UDP_PORTS[k].kind);
     }
     if (!nls) return 1;
+#ifdef _WIN32
+    // Shared with net_host_stop: F1 can stop a server owned by the launcher without killing it mid-write.
+    wchar_t event_name[80];
+    swprintf(event_name, sizeof event_name / sizeof *event_name, L"Local\\MKWRecompServerStop-%lu", GetCurrentProcessId());
+    HANDLE stop_event = CreateEventW(NULL, TRUE, FALSE, event_name);
+    char pid_path[1400], pid_text[16];
+    snprintf(pid_path, sizeof pid_path, "%s/pid", data_dir);
+    snprintf(pid_text, sizeof pid_text, "%lu", GetCurrentProcessId());
+    plat_file_write_atomic(pid_path, pid_text, strlen(pid_text));
+#endif
     srv_log("started: port %d (friends API %d) on %d address(es)", port, port + 1, nhosts);
     time_t end = seconds ? time(NULL) + seconds : 0;
     static struct pollfd pf[MAX_LISTEN + MAX_CONNS];
     int code = 0;
     while (!end || time(NULL) < end) {
+#ifdef _WIN32
+        if (stop_event && WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) break;
+#endif
         int n = 0, polled = nconns;
         for (int i = 0; i < nls; i++) pf[n++] = (struct pollfd){.fd = ls[i].s, .events = POLLIN};
         for (int i = 0; i < nconns; i++)
@@ -326,6 +341,10 @@ int srv_main(int argc, char **argv) {
     }
     for (int i = 0; i < nls; i++) sock_close(ls[i].s);
     srv_store_tick(UINT64_MAX);   // what waited for its second
+#ifdef _WIN32
+    if (stop_event) CloseHandle(stop_event);
+    plat_file_delete(pid_path);
+#endif
     srv_log("stopped");
     return code;
 }

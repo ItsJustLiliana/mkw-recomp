@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Game sessions, rooms, room IDs, ICE and matchmaking (srv_session.h), as the protocol description's sections 6 and 7
 // say. Ids are short counters never reused in a run (gs-0001, mt-0001, gct-0001), as the reference's are.
 #include "srv_session.h"

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server built into the executable: `mkw.exe --server [--host ADDR]... [--port P] [--data DIR]
 // [--seconds S]`, a process of its own (the start screen or the game starts it, and it ends with them), so a fault in it
 // never takes the game down.

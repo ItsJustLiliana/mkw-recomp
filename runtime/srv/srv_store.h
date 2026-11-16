@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's accounts and friendships, kept in <data> (srv_data_dir) as small text files written whole and
 // atomically: accounts.tsv (one account per friend code), links.tsv (who added whom, who declined whom), settings.txt
 // (key=value). Only a one-way hash of each player's secret is kept.

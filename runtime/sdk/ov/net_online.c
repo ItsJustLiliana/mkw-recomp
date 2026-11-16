@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ 918bbd6523729cd18636c051a1e6e62101fd155f (MIT), PR #354.
 // Online play on a private server: settings, friend code, certificate and friends API (net_online.h).
 // Windows does the https of the friends API with WinHTTP; the server's own certificate is pinned (its CA is the only
 // root the chain may end in), checked before the request carries the friend code's secret.

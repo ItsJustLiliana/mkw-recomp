@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // MKW's race referee (the protocol description, "Race referee"), entirely in a game session's Gamesync documents: a
 // player's request document gets a result document (status 0) in the same batch, so every game sees within its 36 s
 // that the race is on; reports are gathered into an official order; the race closes (status 1, final order, Elo

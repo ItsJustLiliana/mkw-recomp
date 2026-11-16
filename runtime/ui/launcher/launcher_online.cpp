@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ 918bbd6523729cd18636c051a1e6e62101fd155f (MIT), PR #354.
 // The start screen's Online page, in the order a player needs it: who they are (name, friend code), how they play
 // (off, hosting the server built into the game, or joining a friend's), then their friends, then LAN play through
 // Tailscale (net_online.h). The server calls run on a thread of their own, one at a time, so the page never waits for

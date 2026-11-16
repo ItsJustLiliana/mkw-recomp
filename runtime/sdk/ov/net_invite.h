@@ -1,0 +1,45 @@
+// Server routing invites for private networks: no directory service, account secret or room state is encoded.
+// The checksum catches typing mistakes; it is not authentication. Access is controlled by the VPN and firewall.
+#pragma once
+#include <stdint.h>
+#include <stdio.h>
+#include <string.h>
+
+static inline int net_invite_local(uint32_t ip) {
+    return (ip >> 24) == 10 || (ip >> 20) == 0xac1 || (ip >> 16) == 0xc0a8 ||
+           (ip >> 22) == 0x191 || (ip >> 24) == 127;
+}
+
+static inline unsigned net_invite_check(uint32_t ip, unsigned port) {
+    return (ip ^ (ip >> 16) ^ port ^ 0x4d4b) & 0xffff;
+}
+
+static inline int net_invite_make(uint32_t ip, unsigned port, char out[32]) {
+    out[0] = 0;
+    if (!net_invite_local(ip) || !port || port > 65533) return 0;
+    snprintf(out, 32, "MKW1-%08X-%04X-%04X", (unsigned)ip, port, net_invite_check(ip, port));
+    return 1;
+}
+
+static inline int net_invite_hex(const char *s, int count, uint32_t *value) {
+    *value = 0;
+    for (int i = 0; i < count; i++) {
+        unsigned char c = (unsigned char)s[i];
+        unsigned d = c >= '0' && c <= '9' ? c - '0' : c >= 'A' && c <= 'F' ? c - 'A' + 10 :
+                     c >= 'a' && c <= 'f' ? c - 'a' + 10 : 16;
+        if (d > 15) return 0;
+        *value = (*value << 4) | d;
+    }
+    return 1;
+}
+
+static inline int net_invite_parse(const char *text, char endpoint[32]) {
+    uint32_t ip, port, check;
+    endpoint[0] = 0;
+    if (!text || strlen(text) != 23 || strncmp(text, "MKW1-", 5) || text[13] != '-' || text[18] != '-' ||
+        !net_invite_hex(text + 5, 8, &ip) || !net_invite_hex(text + 14, 4, &port) ||
+        !net_invite_hex(text + 19, 4, &check) || !net_invite_local(ip) || !port || port > 65533 ||
+        check != net_invite_check(ip, port)) return 0;
+    snprintf(endpoint, 32, "%u.%u.%u.%u:%u", ip >> 24, (ip >> 16) & 255, (ip >> 8) & 255, ip & 255, port);
+    return 1;
+}

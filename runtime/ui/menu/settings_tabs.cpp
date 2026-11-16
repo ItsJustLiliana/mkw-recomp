@@ -13,6 +13,7 @@
 #include "ui/menu/option_rows.h"
 #include "ui/glyphs/glyphs.h"
 #include "ui/menu/settings_tabs.h"
+#include "ui/menu/online_tab.h"
 
 extern "C" {
 #include "cfg.h"
@@ -578,7 +579,7 @@ static void tab_hacks(float scale) {
 }
 
 static const UiTextId kTabNames[TAB_COUNT] = {UI_MENU_TAB_SCREEN,   UI_MENU_TAB_GRAPHICS, UI_MENU_TAB_SOUND,
-                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_GENERAL,  UI_MENU_TAB_ADVANCED,
+                                              UI_MENU_TAB_CONTROLS, UI_MENU_TAB_GENERAL, UI_LAUNCH_ONLINE, UI_MENU_TAB_ADVANCED,
                                               UI_MENU_TAB_HACKS};
 static int g_tab;               // the tab shown
 static int g_tab_request = -1;  // select this tab at the next layout; -1 none
@@ -594,7 +595,7 @@ void settings_opened(void) {
 bool settings_modal(void) { return g_modal || binds_modal(); }
 
 void settings_tabs(float scale, float bottom) {
-    int step = settings_modal()                                                                          ? 0
+    int step = settings_modal() || ImGui::GetIO().WantTextInput                                           ? 0
              : ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) || ImGui::IsKeyPressed(ImGuiKey_E, false) ? 1
              : ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) || ImGui::IsKeyPressed(ImGuiKey_Q, false) ? -1
                                                                                                          : 0;
@@ -627,6 +628,7 @@ void settings_tabs(float scale, float bottom) {
             case TAB_SOUND: tab_sound(scale); break;
             case TAB_CONTROLS: tab_controls(scale); break;
             case TAB_GENERAL: tab_general(scale); break;
+            case TAB_ONLINE: online_tab(scale, bottom); break;
             case TAB_ADVANCED: tab_advanced(scale); break;
             case TAB_HACKS: tab_hacks(scale); break;
             }

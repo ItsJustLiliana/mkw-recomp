@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // One player's connection (srv_h2.h): TLS with Mbed TLS over a non-blocking socket, HTTP/2 with nghttp2 fed from
 // memory (no socket of its own), and gRPC calls on its streams, handed to the services of srv_methods.c (srv_svc.h).
 // Methods without a service of their own get the catch-all the game expects (the protocol description, "Dispatch,

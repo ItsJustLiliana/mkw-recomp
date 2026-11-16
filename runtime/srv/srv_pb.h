@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Protocol Buffers wire format, read and written by hand: the online server (srv_*.c) has no .proto files for the
 // game's messages, only their field numbers, so it walks fields and writes them one by one. Encoding as in
 // https://protobuf.dev/programming-guides/encoding/ : varint, 64-bit, length-delimited and 32-bit fields. Groups

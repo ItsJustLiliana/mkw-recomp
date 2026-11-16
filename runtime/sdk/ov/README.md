@@ -4,6 +4,7 @@ Replacements of `nn::*` functions by name: system, input, audio, video, graphics
 
 | File | What it is |
 |---|---|
+| `net_invite.h` | Checked private IPv4 server routing codes for the F1 tab; contains no account secrets or room state |
 | `ov_system.c` | Accounts, applets, time, system fonts, etc. |
 | `ov_input.c`, `ov_media.c`, `ov_gfx.c`, `ov_zstd.c` | Input, Opus, the SDK's graphics (`nv::InitializeGraphics(0, 0)` is valid on Switch 2; `nv::InitCheck`), native zstd (its outputs go to `core/hacks/classic.c`, which patches the cups' archive) |
 | `ov_codec.c` | MKW's video: the `nn::codec` video API (VP9 with libvpx, decoded in `Submit`) and the `nn::syncpt` events as the game's `SystemEvent` |

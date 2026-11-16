@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Sign-in (Auth/IssuePrearrangedUserToken) and the bearer tokens it hands out: HMAC-SHA256-signed with a key made on
 // this PC (<data>/token.key), so a token cannot be forged and stays valid when the server starts again.
 #pragma once

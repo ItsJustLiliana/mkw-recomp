@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ 918bbd6523729cd18636c051a1e6e62101fd155f (MIT), PR #354.
 // Online play on a private server that speaks the game's online protocol (the one built into mkw, runtime/srv, or
 // another): the settings, this player's friend code, the server's certificate and its friends API. Shared by the
 // game's network overrides (ov_net.c) and the start screen's Online page (launcher).

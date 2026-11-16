@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's TLS (srv_tls.h). Certificates as the game's servers need them: an RSA-2048 CA and a server
 // certificate it signs for every name the game connects to (they resolve to this server: ov_net.c), SHA-256.
 #include "srv_tls.h"

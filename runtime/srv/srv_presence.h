@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Players online and their presence (srv_presence.c): who is online (calls and open streams), the attributes each
 // player's game publishes (PresenceService/KeepAlive), and the friend list and friends' presences streamed to each
 // player (Friends SubscribeFriendUsers, SubscribePresences).

@@ -1,10 +1,37 @@
 # Multiplayer prototype
 
-This branch brings PR #345's VPN discovery support onto current upstream. It reuses the game's LAN lobby and
-gameplay protocol, with no new synchronization protocol, dedicated server or database. LAN remains off by default.
-There is no Custom Online menu, join code, public server list or matchmaking in this milestone. The host runs the game.
-Existing LAN menus provide controller navigation and group creation/joining; room lifecycle and race behavior remain
-the game's responsibility and need the acceptance test below.
+This branch integrates the private-server and client work from PRs #353 and #354, retains PR #345's VPN LAN support,
+and adds an **Online play** tab to the F1 menu. Online remains off by default. This is experimental: automated server
+protocol tests pass, but a two-PC game race and this client's in-game Online Play flow remain unverified.
+
+## Host and join from F1
+
+1. Both players use this modified build and the same game version. Start without mods.
+2. For internet friends, connect both PCs to the same trusted Tailscale network first. On a home LAN, no VPN is needed.
+3. Host: open **F1 > Online play**, select Tailscale (or Home network), then **Start**. Wait for **Local server running**.
+4. Copy the **server invite code** and give it to your friend. It includes the private IPv4 endpoint and a typing-error
+   checksum. It is not a password or room reservation; keep VPN membership and firewall access restricted to friends.
+5. Friend: open the same tab, paste the complete `MKW1-...` invite, then **Connect and save server**. The client probes
+   the endpoint, obtains its CA on first use, and saves the server choice. A failed connection preserves the old choice.
+6. Restart the game after selecting a server or enabling online. Host mode starts the server again with the launcher.
+   The launcher also has an Online play page for server configuration and friend requests.
+7. In the game, choose **Online Play > Friends**. The host creates a group and shares the game's room code; the friend
+   joins using that room code. The server implements six-digit room aliases. This final game flow still needs manual
+   validation on this branch. The F1 server invite selects the server, not a room or race.
+8. **Stop** ends the local server, including one started by the launcher, and disconnects its players. Normal Stop
+   signals a Windows event so the server closes connections and flushes pending account data; an owned process that
+   fails to exit in five seconds is terminated. **Turn custom online off** also restores offline network behavior.
+
+Network/probe/process/file operations from F1 run on a worker, not the present or replay thread. Buttons support the
+existing ImGui controller navigation. Entering or pasting an invite currently needs a keyboard; controller text entry
+is not implemented. Q/E tab shortcuts are suppressed while typing. Worldwide matchmaking is not a verified feature.
+
+The built-in server uses a separate hidden `mkw.exe --server` process, with accounts, certificates and logs under
+`server/` beside the executable. Do not send that directory, `profile/`, saves or game files to friends. It serves
+TLS/gRPC on TCP 8443, the friends API on TCP 8444, STUN on UDP 3478/3479, and NAT checks on UDP 10025/10125/33334.
+The game also uses peer traffic. The firewall button asks Windows to permit this executable from local subnets and
+Tailscale addresses only; it does not configure your router. First-use CA retrieval trusts the selected VPN endpoint;
+server invites carry no cryptographic identity proof. Existing saved CAs are retained by the F1 connection flow.
 
 ## Windows build and setup
 
@@ -51,8 +78,9 @@ game packets retain their existing destinations. Tailscale's /32 interface mask 
 reported to the game so Pia accepts the network. This does not change Windows routing. Use numeric IPv4 peers to
 avoid DNS delays. ZeroTier is another candidate, but its address range, subnet and broadcast behavior need testing.
 
-Direct public-IP port forwarding is not supported by this branch: the socket layer rejects public destinations and
-the lobby requires discovery. Forwarding one UDP port does not solve those problems. A discovery server alone would
+Direct public-IP port forwarding is not supported by the F1 invites: the built-in host binds private interfaces,
+and invite codes accept private IPv4 addresses only. The separate LAN path rejects public destinations and requires
+discovery. Forwarding one UDP port does not solve those problems. A discovery server alone would
 also not solve NAT traversal or relay gameplay. Tailscale may use its own relay infrastructure when direct NAT
 traversal fails; this prototype requires no project-operated permanent central server and adds no UPnP mappings.
 
@@ -79,24 +107,22 @@ Local validation on Windows: the runtime-only build links successfully; both cha
 documentation checks pass. Portable package assembly and game runs were not performed. `--selftest` with dependency
 DLLs on PATH stops at the missing game setup (exit 70), so runtime self-tests are not counted as passed.
 
-## Existing dedicated server path and next milestone
+## Source and verification status
 
-Checked 16 November 2026: [#345](https://github.com/adriadam10/mkw-recomp/pull/345),
-[#353](https://github.com/adriadam10/mkw-recomp/pull/353) and
-[#354](https://github.com/adriadam10/mkw-recomp/pull/354) are open and unmerged. #345's author reports three completed
-1.0.0 races on two Windows PCs over Tailscale at `6b191f2`; that is external evidence, not a test of this branch.
+The integration uses Gael50's MIT commits `ca1567904cfabca413fa0b73ffe030ba69d109b7` (server, #353),
+`918bbd6523729cd18636c051a1e6e62101fd155f` (client, #354), and #343/#344's kernel and localization prerequisites.
+These PRs were open and unmerged when inspected. Their source work and third-party dependencies are credited in
+[research.md](research.md#sources). The server protocol is implemented at the SDK/service API level, with no CPU or
+GPU emulation and no copied Nintendo code or assets.
 
-#353 (`ca156790`) implements a separate server process in the game executable:
-`mkw.exe --server --host ADDR --port N --data DIR`. It serves TLS/HTTP2/gRPC accounts, friends, rooms, Gamesync,
-matchmaking and UDP STUN/NAT checks. This command is **not available on this branch**. Its author reports synthetic
-two-user server tests and one real client reaching a room, not a completed two-client race.
+Verification for the F1 integration: a Windows runtime/server executable links in an isolated test folder; the
+real server's ten tests pass, including TLS, UDP, malformed messages, memory limits, synthetic two-member room join,
+Gamesync, results/referee and matchmaking. Windows fixture teardown signals the actual shutdown event and verifies
+normal exit, final log and PID-file removal. Invite, VPN peer and address-change tests pass. Localization and settings
+checks pass. The shared Online settings tab was rendered and visually inspected in the launcher, without game images.
+These checks are not proof of two clients completing a race. Use the acceptance checklist above before calling it
+working multiplayer. The user's existing executable must be closed before a new build can replace it.
 
-#354 (`918bbd65`) adds the client redirection, custom CA, account identity and launcher Online page. It depends on
-#343, #344, #345 and #353 and reports no two-PC race test. The current checkout only has LAN SDK sockets and offline
-friends/local-wireless/online-service stubs, so importing the server alone would not connect the game to it.
-
-Next: review and port that dependency stack separately, build and run its server protocol tests, then perform the
-two-PC race test before adding new UI. Inspect account/token and certificate handling, bounded packets/connections,
-disconnect cleanup and shutdown along with the gameplay path. Preserve LAN and offline defaults. Only after that
-should Custom Online wrap proven host/join operations; Worldwide and server browsing must remain labelled unavailable
-until implemented. Defer the standalone launcher, public matchmaking and automatic updates.
+Next: test actual Online Play sign-in and a private room with two game clients, then complete a race and test guest
+and host disconnects. Keep the existing LAN fallback available throughout. Defer the standalone launcher and public
+server directory until this path is validated.

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // One player's connection to the online server's gRPC port: TLS (srv_tls.h), HTTP/2 (nghttp2) and gRPC calls on it.
 // Run from the server's single poll loop: srv_conn_step does what the socket allows and never waits.
 #pragma once

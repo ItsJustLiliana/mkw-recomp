@@ -4,7 +4,7 @@
 #include <vulkan/vulkan.h>
 
 // The players' tabs first; Advanced (testing and troubleshooting) and Hacks last, drawn dim.
-enum { TAB_SCREEN, TAB_GRAPHICS, TAB_SOUND, TAB_CONTROLS, TAB_GENERAL, TAB_ADVANCED, TAB_HACKS, TAB_COUNT };
+enum { TAB_SCREEN, TAB_GRAPHICS, TAB_SOUND, TAB_CONTROLS, TAB_GENERAL, TAB_ONLINE, TAB_ADVANCED, TAB_HACKS, TAB_COUNT };
 
 void settings_list_gpus(VkInstance inst);   // once: the Vulkan devices the Screen tab offers (MKW_GPU_INDEX)
 void settings_select(int tab);              // that tab at the next layout

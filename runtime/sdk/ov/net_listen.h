@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ 918bbd6523729cd18636c051a1e6e62101fd155f (MIT), PR #354.
 // When this PC's server should listen again (net_host.c net_host_listen_changed): the addresses of the network choice
 // differ from the ones it listens on, and for good. An address added counts once it has stayed NET_LISTEN_ADD_MS, one
 // gone once it has stayed gone NET_LISTEN_GONE_MS. Tailscale's adapter drops its address for seconds while it

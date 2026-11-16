@@ -22,8 +22,8 @@ def test_peer_selection(tmp_path: Path) -> None:
     if not cc:
         pytest.skip("no C compiler; install tools/build/windeps.py on Windows")
     source = (ROOT / "runtime/sdk/ov/ov_socket.c").read_text()
-    policy = source[source.index("int ov_lan_only("):source.index("// 0, or -1 with ENETUNREACH")]
-    peers = source[source.index("static int net_startup("):source.index("static int msg_flags(")]
+    policy = source[source.index("int ov_lan_only("):source.index("int ov_lan(void)")]
+    peers = source[source.index("static int net_startup("):]
     prelude = r'''
 #include <assert.h>
 #include <stdint.h>

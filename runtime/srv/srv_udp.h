@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's UDP answers, as pure functions of the datagram and the address it came from: the socket loop
 // (srv_main.c) only receives and sends. Pia (the game's peer-to-peer library) asks them before a race to learn the
 // address its peers will see.

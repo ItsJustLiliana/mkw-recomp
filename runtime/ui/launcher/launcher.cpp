@@ -1748,7 +1748,7 @@ extern "C" int launcher_run(void) {
         ImGui_ImplSDL3_NewFrame();
         io.DisplaySize = ImVec2((float)pw, (float)ph);   // pixels: the style and fonts follow the height
         io.DisplayFramebufferScale = ImVec2(1, 1);
-        static const char *const kPage[] = {"main", "settings", "files", "mods", "players", "tools"};
+        static const char *const kPage[] = {"main", "settings", "files", "mods", "players", "tools", "online"};
         ui_id_check(kPage[L.page]);
         ImGui::NewFrame();
         // the intro's clock starts with the first frame of the main page, before its background: started in
@@ -1770,6 +1770,7 @@ extern "C" int launcher_run(void) {
         case PAGE_MODS: page_mods((float)pw, (float)ph); break;
         case PAGE_PLAYERS: page_players((float)pw, (float)ph); break;
         case PAGE_TOOLS: page_tools((float)pw, (float)ph); break;
+        case PAGE_ONLINE: page_online((float)pw, (float)ph); break;
         }
         // the page just switched to comes in from its own colour in 0.15 s, over everything drawn this frame
         if (L.page_t0 > 0 && !launcher_fade(ImGui::GetForegroundDrawList(), (float)pw, (float)ph,

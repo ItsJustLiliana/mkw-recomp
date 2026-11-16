@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ 918bbd6523729cd18636c051a1e6e62101fd155f (MIT), PR #354.
 // This PC's networks and its own online server, started by mkw (net_online.h).
 //
 // The server is built into the executable (runtime/srv): `mkw --server`, with its data (keys, accounts, logs) in
@@ -31,6 +32,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
+#include <wchar.h>
 
 #include "cfg.h"
 #include "menu.h"
@@ -197,7 +199,9 @@ static int port_answers(void) {
     FD_SET(s, &w);
     FD_SET(s, &e);
     struct timeval tv = {0, 150000};
-    if (select(0, NULL, &w, &e, &tv) > 0 && FD_ISSET(s, &w)) ok = 1;
+    int error = 0, error_len = sizeof error;
+    if (select(0, NULL, &w, &e, &tv) > 0 && FD_ISSET(s, &w) &&
+        !getsockopt(s, SOL_SOCKET, SO_ERROR, (char *)&error, &error_len) && !error) ok = 1;
     closesocket(s);
 #else
     int s = socket(AF_INET, SOCK_STREAM, 0);
@@ -223,6 +227,25 @@ static int beside_exe(const char *name, char *out, size_t cap) {
     *cut = 0;
     snprintf(out, cap, "%s/%s", exe, name);
     return 1;
+}
+
+static HANDLE server_stop_event(DWORD pid) {
+    if (!pid) {
+        char path[1200];
+        if (beside_exe("server/pid", path, sizeof path)) {
+            uint64_t size;
+            char *text = (char *)plat_file_read(path, &size);
+            if (text && size < 16) {
+                char number[16] = {0};
+                memcpy(number, text, (size_t)size);
+                pid = (DWORD)strtoul(number, NULL, 10);
+            }
+            free(text);
+        }
+    }
+    wchar_t name[80];
+    swprintf(name, sizeof name / sizeof *name, L"Local\\MKWRecompServerStop-%lu", pid);
+    return pid ? OpenEventW(EVENT_MODIFY_STATE, FALSE, name) : NULL;
 }
 
 // The addresses the server listens on for the network choice: 127.0.0.1, then the chosen networks' that are up
@@ -396,8 +419,16 @@ int net_host_start(char *err, size_t cap) {
 
 void net_host_stop(void) {
     plat_mutex_lock(&host_lock);
-    if (host_job) TerminateJobObject(host_job, 0);
-    else if (host_proc) TerminateProcess(host_proc, 0);
+    DWORD pid = host_proc ? GetProcessId(host_proc) : 0;
+    // The launcher may own this process while the game displays F1. Signal only its server event;
+    // never terminate a PID read from disk (it may have been reused by an unrelated program).
+    HANDLE event = server_stop_event(pid);
+    if (event) SetEvent(event), CloseHandle(event);
+    if (host_proc && WaitForSingleObject(host_proc, 5000) != WAIT_OBJECT_0) {
+        rt_log("net: server did not stop in 5 seconds; terminating it");
+        if (host_job) TerminateJobObject(host_job, 0);
+        else TerminateProcess(host_proc, 0);
+    }
     if (host_proc) {
         WaitForSingleObject(host_proc, 3000);
         rt_log("net: the server stopped");
@@ -423,7 +454,12 @@ NetHostState net_host_state(char *detail, size_t cap) {
         st = port_answers() ? NET_HOST_RUNNING : NET_HOST_STARTING;
         if (detail && cap) snprintf(detail, cap, "%s", host_listen);
     } else if (port_answers()) {
-        st = NET_HOST_OTHER;
+        HANDLE event = server_stop_event(0);
+        st = event ? NET_HOST_RUNNING : NET_HOST_OTHER;
+        if (event) {
+            CloseHandle(event);
+            if (detail && cap) listen_list(detail, cap);
+        }
     } else if (host_error[0]) {
         st = NET_HOST_FAILED;
         if (detail && cap) snprintf(detail, cap, "%s", host_error);

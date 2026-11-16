@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The methods the game calls that are not plain unary catch-alls (srv_svc.h): the services, and the stream kinds of the
 // others (the wire does not say whether a method streams; the protocol description lists them).
 #include <string.h>

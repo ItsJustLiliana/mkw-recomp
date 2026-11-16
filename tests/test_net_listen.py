@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_net_listen(tmp_path: Path) -> None:
     cc = shutil.which("clang") or shutil.which("cc") or shutil.which("gcc")
+    bundled = ROOT / "build/win/llvm-mingw/bin/x86_64-w64-mingw32-clang.exe"
+    if not cc and bundled.exists():
+        cc = str(bundled)
     if not cc:
         pytest.skip("no C compiler")
     exe = tmp_path / "t_net_listen.exe"

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // A game session's Gamesync documents (the protocol description, "Gamesync"): paths with fields (srv_value.h), the
 // writes the game sends (Update with a field mask, Set, Delete, Transform and its session counters) and the results it
 // reads back. Writes run in batches: a batch keeps each path as it was before its first write, so at the end it knows

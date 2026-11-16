@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Sign-in and bearer tokens (srv_auth.h), as the protocol description's "Identity, sign-in and accounts" says: the
 // identity string our runtime puts in the game's sign-in request (droplet-online-v1;code=...;secret=...;friends=...),
 // accounts bound to the first secret that uses a code, registration open / approval / closed, a sign-in limit per

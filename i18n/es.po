@@ -2949,3 +2949,68 @@ msgstr ""
 msgctxt "UI_ONLINE_JOIN_DESC"
 msgid "Write the address your friend gives you (it ends with :8443), then Connect."
 msgstr ""
+
+msgctxt "UI_F1_OWN_INVITE"
+msgid "This is your own server invite. Keep hosting; give this code to your friend."
+msgstr ""
+
+msgctxt "UI_F1_EXPERIMENTAL"
+msgid "Custom Online (experimental). Two-PC racing has not been verified on this build."
+msgstr ""
+
+msgctxt "UI_F1_INSTRUCTIONS"
+msgid ""
+"Host here or enter a server invite. Friends outside your home network need Tailscale. After "
+"restarting, use Online Play > Friends in the game to create a group and share its room code. A "
+"server invite selects the server; it does not join a race or grant private access."
+msgstr ""
+
+msgctxt "UI_F1_NO_ADDRESS"
+msgid "No address on the selected network. Connect Tailscale or your home network, then try again."
+msgstr ""
+
+msgctxt "UI_F1_FIREWALL_FAILED"
+msgid "Windows did not accept the firewall request."
+msgstr ""
+
+msgctxt "UI_F1_SAVED"
+msgid "Request completed. Settings saved."
+msgstr ""
+
+msgctxt "UI_F1_WORKER_FAILED"
+msgid "Could not start the online controls worker. Try again."
+msgstr ""
+
+msgctxt "UI_F1_RUNNING"
+msgid "Local server running"
+msgstr ""
+
+msgctxt "UI_F1_FAILED"
+msgid "Local server failed"
+msgstr ""
+
+msgctxt "UI_F1_INVITE"
+msgid "Server invite code (share with trusted friends)"
+msgstr ""
+
+msgctxt "UI_F1_JOIN"
+msgid "Join a server by invite code"
+msgstr ""
+
+msgctxt "UI_F1_CONNECT"
+msgid "Connect and save server"
+msgstr ""
+
+msgctxt "UI_F1_INVALID_INVITE"
+msgid "Invalid server invite. Paste the full MKW1 code, including its dashes."
+msgstr ""
+
+msgctxt "UI_F1_OFF"
+msgid "Turn custom online off"
+msgstr ""
+
+msgctxt "UI_F1_RESTART"
+msgid ""
+"Restart the game before using Online Play with these settings. Stopping the server disconnects "
+"its players."
+msgstr ""

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // Game sessions (the protocol description, "Game sessions, rooms, room IDs, ICE" and "Matchmaking"): rooms made by
 // a creation ticket and joined by JoinGameSession, sessions the matcher makes from matchmaking tickets, room IDs (short
 // aliases), ICE server sets. Each session holds its Gamesync documents (srv_docs.h), served by srv_gamesync.c, and its

@@ -1,3 +1,4 @@
+// Integrated from Gael50/mkw-recomp @ ca1567904cfabca413fa0b73ffe030ba69d109b7 (MIT), PR #353.
 // The online server's sockets, the same code on Windows (Winsock) and elsewhere (BSD sockets).
 #pragma once
 #ifdef _WIN32
