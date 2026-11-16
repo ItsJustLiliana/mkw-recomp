@@ -14,12 +14,14 @@ From the repository root in PowerShell:
 ```powershell
 uv run tools/build/windeps.py
 uv run tools/build/build.py --target windows --dist --runtime-only
+uv run tools/build/dist.py --target windows
 uv run pytest tests/test_lan_peers.py
 uv run tools/git/cfg_rows.py
 uv run tools/docs/check.py
 ```
 
-Run `build/dist/windows/mkw.exe` and use Game files to prepare your own legitimate dump. Both PCs must use this
+The `dist.py` step assembles the portable setup tools and dependency DLLs; a runtime-only build by itself is not a
+complete player installation. Run `build/dist/windows/mkw.exe` and use Game files to prepare your own legitimate dump. Both PCs must use this
 client build and the same game version and compatible mods. Start with 1.0.0 and no mods; 1.8.0 needs separate testing.
 
 For the first private internet test, put both PCs on the same Tailscale network and verify they can reach one another
@@ -71,6 +73,11 @@ without a playable race points to a gameplay/session problem that lobby success 
 
 Passing the peer-helper test proves configuration and address selection only. It does not prove packet delivery,
 race initialization, synchronized inputs/state, results, disconnect recovery or two-PC compatibility.
+
+Local validation on Windows: the runtime-only build links successfully; both changed network files pass Clang
+`-Wall -Wextra -Wshadow` syntax checks; the peer-helper and settings tests pass (2 tests); Ruff, settings-row and
+documentation checks pass. Portable package assembly and game runs were not performed. `--selftest` with dependency
+DLLs on PATH stops at the missing game setup (exit 70), so runtime self-tests are not counted as passed.
 
 ## Existing dedicated server path and next milestone
 
