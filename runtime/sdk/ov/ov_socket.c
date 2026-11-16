@@ -234,6 +234,7 @@ static int net_startup(void) {
     return 0;
 }
 
+// VPN discovery from Gael50/mkw-recomp @ 6b191f2e14ad4d492d0b4e4a3f2639e1e3a3ebe2 (MIT), PR #345.
 // ---- MKW_LAN_PEERS, parsed again when the setting changes (names resolved then, IPv4 only)
 static PlatMutex peers_lock = PLAT_MUTEX_INIT;
 static char peers_text[512];

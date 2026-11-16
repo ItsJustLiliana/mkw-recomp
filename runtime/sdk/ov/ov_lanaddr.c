@@ -1,4 +1,5 @@
 // The LAN address nifm reports (ov_net.c ov_ip_config), split from ov_socket.c.
+// VPN routing/mask changes: Gael50/mkw-recomp @ 6b191f2e14ad4d492d0b4e4a3f2639e1e3a3ebe2 (MIT), PR #345.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>

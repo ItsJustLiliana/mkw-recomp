@@ -5,6 +5,7 @@ end's regression test runs over captures instead (`tools/test/`).
 
 | File | What it checks |
 |---|---|
+| `test_lan_peers.py` | Compiles the production VPN peer helpers: local-address filtering, broadcast-only selection, bounded peer counts, settings reload and loopback binds; no game or GPU |
 | `test_warp32.py` | Executes the translator's actual shuffle/ballot helpers and emitted signed/unsigned reductions as C++ on synthetic 32/64/128-lane subgroups, with distinct values per logical warp and partially active masks |
 | `test_spirv_images.py` | Integer image variants of synthetic compute shaders through the production patcher (`c/t_spirv_images.c`): signed and unsigned storage images, separate image/sampler construction, input preservation and actionable failure reasons; optional SPIR-V validation |
 | `test_setup.py` | The setup's command lines and files from folders with spaces and accents: the compiler's path on its way to the shader step (issue #29), the resume without `--source` after an update, the update's version order and its clean-up of `*.old` files, the update that regenerates the code cleanup removed, NVIDIA's downloads fetched again when they arrive damaged (issue #207), a broken SM86 spec built again instead of reused (issue #325), and setup tools, unpacking and warm-up when the installation is separate from the launcher, including symlink/junction aliases of long installation paths and response-file paths with spaces, quotes and backslashes for Clang, Zig and lld-link |
