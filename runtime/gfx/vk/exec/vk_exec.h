@@ -222,6 +222,7 @@ void vk_c0_fill(uint8_t bank[VK_C0_BYTES], int stage, const p_bind_buf ssbo[16],
 // alone (1 when op is one); a chunk's start (its state becomes this thread's, x_cur) and end (pass ended, a full barrier,
 // its views freed at its fence, x_cur cleared).
 int vk_exec_op(VkExec *ex, const op_hdr *h);
+void vk_exec_drew(VkExec *ex);   // after a draw vk_exec_op recorded outside walk: the split check
 int vk_exec_state_op(VkExec *ex, uint32_t op, const void *a);
 // seen_depth: the depth images earlier chunks bound (nseen -1: unknown), which clear layer by layer (dc_layered)
 void vk_exec_chunk_begin(VkExec *ex, const VkImage *seen_depth, int nseen);
@@ -239,7 +240,8 @@ typedef struct {
 } VkExecQueues;
 int vk_exec_queue_swap(VkExecQueues *t, VkExec *ex, uint64_t id);
 // vk_exec_par.c: called by vk_exec_record before it walks; 1 when it recorded and submitted the submission's ops as
-// chunks (ex then holds the state after the last op and a new command buffer for the rest); 0: walk as usual. diag: a
+// chunks (ex then holds the state after the last op and a new command buffer for the rest); 2 when it recorded them
+// serially itself (a serial head that the rest of the submission did not follow in chunks); 0: walk as usual. diag: a
 // diagnosis that times ops or passes is on (chunks stay off). vk_exec_par_log: the perf line (MKW_TRACE=perf).
 int vk_exec_par(VkExec *ex, const uint64_t *handles, int n, int diag);
 void vk_exec_par_log(void);
