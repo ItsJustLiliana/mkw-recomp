@@ -76,7 +76,7 @@ extern "C" void menu_toggle(void) {
 }
 
 // ---- events from the window adapter, queued while the menu is open; the present path hands them to ImGui
-enum { EV_KEY, EV_POS, EV_BUTTON, EV_WHEEL, EV_FOCUS, EV_MAX = 256 };
+enum { EV_KEY, EV_POS, EV_BUTTON, EV_WHEEL, EV_FOCUS, EV_TEXT, EV_MAX = 256 };
 struct Ev { int type, a, b; float x, y; };
 static PlatMutex ev_lock = PLAT_MUTEX_INIT;
 static Ev ev_q[EV_MAX];
@@ -91,6 +91,7 @@ static void push(Ev e) {
 }
 
 extern "C" void menu_event_key(int key, int down) { push({EV_KEY, key, down, 0, 0}); }
+extern "C" void menu_event_char(unsigned codepoint) { push({EV_TEXT, (int)codepoint, 0, 0, 0}); }
 extern "C" void menu_event_mouse_pos(float x, float y) { push({EV_POS, 0, 0, x, y}); }
 extern "C" void menu_event_mouse_button(int button, int down) { push({EV_BUTTON, button, down, 0, 0}); }
 extern "C" void menu_event_wheel(float dx, float dy) { push({EV_WHEEL, 0, 0, dx, dy}); }
@@ -107,6 +108,7 @@ static void drain_events(ImGuiIO &io) {
         const Ev &e = q[i];
         switch (e.type) {
         case EV_KEY: io.AddKeyEvent((ImGuiKey)e.a, e.b != 0); break;
+        case EV_TEXT: io.AddInputCharacter((unsigned)e.a); break;
         case EV_POS: io.AddMousePosEvent(e.x, e.y); break;
         case EV_BUTTON: io.AddMouseButtonEvent(e.a, e.b != 0); break;
         case EV_WHEEL: io.AddMouseWheelEvent(e.x, e.y); break;

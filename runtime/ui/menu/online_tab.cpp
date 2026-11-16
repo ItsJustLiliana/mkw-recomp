@@ -16,7 +16,7 @@ extern "C" {
 #include "ui_text.h"
 }
 
-enum { REFRESH, HOST, JOIN, STOP, OFF, FIREWALL };
+enum { IDLE = -1, REFRESH, HOST, JOIN, STOP, OFF, FIREWALL };
 struct Snapshot {
     NetHostState host;
     char detail[200], invite[32], server[160], status[300];
@@ -24,12 +24,13 @@ struct Snapshot {
 };
 static PlatMutex lock = PLAT_MUTEX_INIT;
 static Snapshot snapshot;
-static std::atomic<bool> busy;
+static std::atomic<int> active{IDLE};
 static bool initialized;
 static char join_code[64];
 static int network;
 static const char *const networks[] = {"auto", "home", "tailscale"};
 struct Task { int action; char endpoint[32]; int network; };
+static Task pending{IDLE, "", 0};   // UI thread only: a click during a status probe must not disappear
 
 static int SDLCALL work(void *arg) {
     Task task = *(Task *)arg;
@@ -61,7 +62,7 @@ static int SDLCALL work(void *arg) {
             plat_mutex_lock(&lock);
             snapshot = next;
             plat_mutex_unlock(&lock);
-            busy.store(false);
+            active.store(IDLE);
             return 0;
         }
         const char *why = net_probe(task.endpoint, err, sizeof err);
@@ -105,27 +106,35 @@ static int SDLCALL work(void *arg) {
     plat_mutex_lock(&lock);
     snapshot = next;
     plat_mutex_unlock(&lock);
-    busy.store(false);
+    active.store(IDLE);
     return 0;
 }
 
-static void submit(int action, const char *endpoint = "") {
-    if (busy.exchange(true)) return;
+static void dispatch(const Task &request) {
+    int expected = IDLE;
+    if (!active.compare_exchange_strong(expected, request.action)) {
+        if (request.action != REFRESH) pending = request;
+        return;
+    }
     Task *task = (Task *)SDL_calloc(1, sizeof *task);
     if (task) {
-        task->action = action;
-        task->network = network;
-        snprintf(task->endpoint, sizeof task->endpoint, "%s", endpoint);
+        *task = request;
         if (SDL_Thread *thread = SDL_CreateThread(work, "online controls", task)) {
             SDL_DetachThread(thread);
             return;
         }
         SDL_free(task);
     }
-    busy.store(false);
+    active.store(IDLE);
     plat_mutex_lock(&lock);
     snprintf(snapshot.status, sizeof snapshot.status, "%s", menu_text(UI_F1_WORKER_FAILED));
     plat_mutex_unlock(&lock);
+}
+
+static void submit(int action, const char *endpoint = "") {
+    Task request{action, "", network};
+    snprintf(request.endpoint, sizeof request.endpoint, "%s", endpoint);
+    dispatch(request);
 }
 
 void online_tab(float scale, float bottom) {
@@ -137,7 +146,12 @@ void online_tab(float scale, float bottom) {
     }
     static uint64_t polled;
     uint64_t now = SDL_GetTicks();
-    if (now - polled > 2000 && !busy.load()) {
+    if (pending.action != IDLE && active.load() == IDLE) {
+        Task request = pending;
+        pending.action = IDLE;
+        dispatch(request);
+    }
+    if (now - polled > 2000 && active.load() == IDLE) {
         polled = now;
         submit(REFRESH);
     }
@@ -150,8 +164,10 @@ void online_tab(float scale, float bottom) {
     ImGui::TextWrapped("%s", menu_text(UI_F1_INSTRUCTIONS));
     ImGui::SeparatorText(menu_text(UI_ONLINE_NETWORK));
     const UiTextId names[] = {UI_ONLINE_NET_AUTO, UI_ONLINE_NET_HOME, UI_ONLINE_NET_TS};
+    // Status polling never changes widget enablement or focus. Only an explicit action blocks other actions.
+    bool changing = active.load() > REFRESH || pending.action != IDLE;
     bool running = view.host == NET_HOST_RUNNING || view.host == NET_HOST_STARTING || view.host == NET_HOST_OTHER;
-    ImGui::BeginDisabled(busy.load() || running);
+    ImGui::BeginDisabled(changing || running);
     for (int i = 0; i < 3; i++) {
         if (ImGui::RadioButton(menu_text(names[i]), network == i)) network = i;
         if (i != 2) ImGui::SameLine();
@@ -167,11 +183,12 @@ void online_tab(float scale, float bottom) {
         ImGui::TextUnformatted(view.invite);
         if (ImGui::Button(menu_text(UI_ONLINE_COPY))) ImGui::SetClipboardText(view.invite);
     }
-    ImGui::BeginDisabled(busy.load() || !running);
+    ImGui::BeginDisabled(changing || !running);
     if (ImGui::Button(menu_text(UI_ONLINE_HOST_STOP))) submit(STOP);
     ImGui::EndDisabled();
-    ImGui::BeginDisabled(busy.load());
+    ImGui::BeginDisabled(changing);
     if (ImGui::Button(menu_text(UI_ONLINE_HOST_FIREWALL))) submit(FIREWALL);
+    ImGui::EndDisabled();
     ImGui::TextWrapped("%s", menu_text(UI_ONLINE_HOST_FIREWALL_DESC));
     ImGui::SeparatorText(menu_text(UI_F1_JOIN));
     ImGui::SetNextItemWidth(430 * scale);
@@ -179,15 +196,16 @@ void online_tab(float scale, float bottom) {
                              ImGuiInputTextFlags_CharsNoBlank);
     char endpoint[32];
     bool valid = net_invite_parse(join_code, endpoint) != 0;
-    ImGui::BeginDisabled(!valid);
+    ImGui::BeginDisabled(changing || !valid);
     if (ImGui::Button(menu_text(UI_F1_CONNECT))) submit(JOIN, endpoint);
     ImGui::EndDisabled();
     if (*join_code && !valid) ImGui::TextWrapped("%s", menu_text(UI_F1_INVALID_INVITE));
+    ImGui::BeginDisabled(changing);
     if (ImGui::Button(menu_text(UI_F1_OFF))) submit(OFF);
     ImGui::EndDisabled();
     if (*view.server) ImGui::TextWrapped("%s: %s", menu_text(UI_ONLINE_SERVER), view.server);
     if (*view.status) ImGui::TextWrapped("%s", view.status);
     if (view.restart) ImGui::TextWrapped("%s", menu_text(UI_F1_RESTART));
-    if (busy.load()) ImGui::TextUnformatted("...");
+    if (changing) ImGui::TextUnformatted("...");
     ImGui::EndChild();
 }

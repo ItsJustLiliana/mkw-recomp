@@ -30,6 +30,7 @@ void menu_notice(const char *text, int seconds);   // a line at the top of the p
 // ---- events from the window adapter, used only while the menu is open. key: an ImGuiKey; coordinates in pixels of the
 // window's client area, which is the swapchain image.
 void menu_event_key(int key, int down);
+void menu_event_char(unsigned codepoint); // decoded SDL text, queued before the present thread uses ImGui
 void menu_event_mouse_pos(float x, float y);
 void menu_event_mouse_button(int button, int down);   // 0 left, 1 right, 2 middle
 void menu_event_wheel(float dx, float dy);

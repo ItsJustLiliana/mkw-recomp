@@ -7,7 +7,7 @@ The in-game menu (F1) and what it shares with the start screen: look, settings t
 | `online_tab.cpp`, `online_tab.h` | F1 private-server host/stop and invite-code connection controls; network, process and disk operations run on a worker, with cached status for drawing |
 | `menu.cpp`, `menu.h` | Menu core: ImGui state, event queue, controller navigation, Vulkan back end and pages; no window system |
 | `menu_notice.cpp`, `menu_notice.h` | `menu_notice`: a timed line at the top of the picture, menu open or not (missing controllers) |
-| `menu_sdl.cpp` | Event adapter for the SDL3 window |
+| `menu_sdl.cpp` | Event adapter for the SDL3 window: text-input lifecycle on the window thread, UTF-8 characters and editing modifiers queued to ImGui |
 | `settings_tabs.cpp`, `settings_tabs.h` | The settings tabs (bar and rows of each tab), shared by the menu and the start screen |
 | `menu_look.cpp`, `menu_look.h` | Colours and sizes of the menu, and the fonts it shares with the start screen (embedded Roboto) |
 | `option_rows.cpp`, `option_rows.h` | Two-pane settings pages: rows of the `cfg.h` table on the left, description on the right (from SavageWindRecomp, MIT); their colours are the menu's unless a caller passes its own (`opt_look`) |

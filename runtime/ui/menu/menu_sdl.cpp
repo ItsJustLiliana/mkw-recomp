@@ -16,6 +16,8 @@ extern "C" {
 }
 
 static ImGuiKey key_of(SDL_Scancode sc) {
+    // Text comes from SDL_EVENT_TEXT_INPUT; these keys are also needed for Ctrl+A/C/V/X/Y/Z editing shortcuts.
+    if (sc >= SDL_SCANCODE_A && sc <= SDL_SCANCODE_Z) return (ImGuiKey)(ImGuiKey_A + sc - SDL_SCANCODE_A);
     switch (sc) {
     case SDL_SCANCODE_UP: return ImGuiKey_UpArrow;
     case SDL_SCANCODE_DOWN: return ImGuiKey_DownArrow;
@@ -42,6 +44,12 @@ static ImGuiKey key_of(SDL_Scancode sc) {
 extern "C" void menu_sdl_event(const SDL_Event *e) {
     float d = (float)gfx_window_sdl_density();
     switch (e->type) {
+    case SDL_EVENT_TEXT_INPUT: {
+        if (!menu_is_open()) return;
+        const char *text = e->text.text;
+        while (text && *text) menu_event_char(SDL_StepUTF8(&text, nullptr));
+        return;
+    }
     case SDL_EVENT_KEY_DOWN:
         // Esc with the menu open (opened by F1 too) is not a toggle here: it goes to the menu, which closes itself
         if (!e->key.repeat && (e->key.scancode == SDL_SCANCODE_F1 ||
@@ -56,6 +64,10 @@ extern "C" void menu_sdl_event(const SDL_Event *e) {
         [[fallthrough]];
     case SDL_EVENT_KEY_UP:
         if (!menu_is_open()) return;
+        menu_event_key(ImGuiMod_Ctrl, (e->key.mod & SDL_KMOD_CTRL) != 0);
+        menu_event_key(ImGuiMod_Shift, (e->key.mod & SDL_KMOD_SHIFT) != 0);
+        menu_event_key(ImGuiMod_Alt, (e->key.mod & SDL_KMOD_ALT) != 0);
+        menu_event_key(ImGuiMod_Super, (e->key.mod & SDL_KMOD_GUI) != 0);
         if (ImGuiKey k = key_of(e->key.scancode)) menu_event_key(k, e->type == SDL_EVENT_KEY_DOWN);
         return;
     case SDL_EVENT_MOUSE_MOTION:
@@ -79,4 +91,12 @@ extern "C" void menu_sdl_event(const SDL_Event *e) {
         menu_event_focus(e->type == SDL_EVENT_WINDOW_FOCUS_GAINED);
         return;
     }
+}
+
+extern "C" void menu_sdl_idle(SDL_Window *window) {
+    // SDL3 does not emit text events until explicitly enabled. All SDL window calls stay on the window thread.
+    if (!window) return;
+    bool want = menu_is_open() != 0;
+    if (want && !SDL_TextInputActive(window)) SDL_StartTextInput(window);
+    else if (!want && SDL_TextInputActive(window)) SDL_StopTextInput(window);
 }
