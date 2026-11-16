@@ -10,6 +10,7 @@ import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -25,6 +26,32 @@ import spec  # noqa: E402
 import update  # noqa: E402
 
 ODD = "Recomp C ñ"  # a space and an accent, as the players' folders have
+
+
+@pytest.mark.parametrize("rename_denied", [False, True])
+def test_packaging_unpack_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rename_denied: bool) -> None:
+    import importlib.util
+
+    module_spec = importlib.util.spec_from_file_location("packaging_dist", ROOT / "tools/build/dist.py")
+    module = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(module)
+    archive, dest = tmp_path / "zig.zip", tmp_path / ODD
+    with zipfile.ZipFile(archive, "w") as z:
+        z.writestr("zig-test/zig.exe", b"test compiler")
+        z.writestr("zig-test/lib/header.h", b"test header")
+    dest.mkdir()
+    (dest / "stale").write_text("old version")
+    if rename_denied:
+        def denied(self: Path, target: Path) -> None:
+            error = PermissionError("directory rename refused")
+            error.winerror = 5
+            raise error
+
+        monkeypatch.setattr(Path, "rename", denied)
+    module.unpack_top(archive, dest)
+    assert (dest / "zig.exe").read_bytes() == b"test compiler"
+    assert (dest / "lib/header.h").read_bytes() == b"test header"
+    assert not (dest / "stale").exists()
 
 
 def test_cc_survives_spaces(tmp_path: Path) -> None:

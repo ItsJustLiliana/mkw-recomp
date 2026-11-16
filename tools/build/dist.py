@@ -154,7 +154,17 @@ def unpack_top(archive: Path, dst: Path) -> None:
             t.extractall(tmp, filter="tar")
     (top,) = tmp.iterdir()
     shutil.rmtree(dst, ignore_errors=True)
-    top.rename(dst)
+    try:
+        top.rename(dst)
+    except PermissionError as error:
+        # Windows can refuse a directory rename immediately after extracting Zig, even though its files are
+        # readable (reported during native Windows packaging). Copying avoids requiring a directory rename;
+        # real read/write permission failures still propagate from copytree. No completion stamp is written here.
+        if getattr(error, "winerror", None) != 5:
+            raise
+        shutil.copytree(top, dst)
+        shutil.rmtree(tmp, ignore_errors=True)
+        return
     tmp.rmdir()
 
 
