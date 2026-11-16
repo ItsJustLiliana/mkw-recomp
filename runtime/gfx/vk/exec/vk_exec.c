@@ -391,6 +391,12 @@ static void maybe_split(VkExec *ex) {
     if (reopen) vk_exec_pass_begin(ex);
 }
 
+// A draw or dispatch recorded on the replay thread outside walk (MKW_REPLAY_PAR's serial head, vk_exec_par.c): the
+// same split check, so the head's first part goes to the GPU as early as the serial replay's.
+void vk_exec_drew(VkExec *ex) {
+    if (++split_draws >= split_n) maybe_split(ex);
+}
+
 // MKW_TRACE=draw: the replay's time per op (TSC ticks, the call's own handler only), logged with the parts line of
 // MKW_TRACE=perf: where the recording's CPU goes (rt-h2: ~730 ms per s of wall clock in a race). Not part of perf: its
 // clock reads were a third of bind_resources' own samples (rt-x2, perf record).
@@ -716,8 +722,9 @@ int vk_exec_record(VkCommandBuffer cb, const uint64_t *handles, int n, uint64_t 
     if (op_timing > 0) op_tsc[OPX_BEGIN] += plat_cycles() - b0, op_cnt[OPX_BEGIN]++;
     for (int i = 0; i < n; i++)
         if (!handles[i]) rt_fatal("vk: command handle %d of a submission is null", i);
-    if (n && vk_exec_par(ex, handles, n, op_timing > 0 || pt_on > 0)) part_start = ex->recorded;   // chunks submitted
-    else
+    int par = n ? vk_exec_par(ex, handles, n, op_timing > 0 || pt_on > 0) : 0;
+    if (par == 1) part_start = ex->recorded;   // chunks submitted
+    else if (!par)
         for (int i = 0; i < n; i++) walk(ex, nvn_op_first(handles[i]), 0);
     b0 = op_timing > 0 ? plat_cycles() : 0;
     vk_exec_pass_end(ex);

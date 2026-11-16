@@ -1,4 +1,5 @@
-// MKW_REPLAY_PAR (default 0; "ab": in the B blocks): one submission's replay recorded on several threads. The game
+// MKW_REPLAY_PAR (default 1 with 6 or more physical cores, 0 below; "ab": in the B blocks): one submission's replay
+// recorded on several threads. The game
 // sends a race frame as one NVN command buffer of 2,500-3,100 draws, and one thread records it in 16-23 ms
 //. Here a light walk follows the replay state through the submission's ops
 // without recording (0.5 ms a race frame, walk1) and cuts them into chunks of MKW_REPLAY_PAR_DRAWS draws and
@@ -26,6 +27,12 @@
 //   although the GPU was busy 1.6-4.5 ms less (tl60a/tl60b, GTX 1050 Ti with MKW_FPS=60). A prescan rules out first
 //   the ops the walk could not leave once chunks are out (samples-passed reports and resets), keeps cuts for the
 //   queue switches and lists the texture slots, all checked before the walk (MKW_REPLAY_PAR_PRECHECK).
+// - A serial head (MKW_REPLAY_PAR_HEAD, 256 draws; 0 off): the replay thread records the submission's start itself,
+//   as the serial replay does (its first part sent after MKW_SPLIT_US), up to the first target change after that many
+//   draws; the prescan and the slot check then run while the GPU works on it. Before them, the GPU waited for both
+//   and for chunk 0 on another thread: it began 5.4-6.3 ms after the game's last submit against ~2.4 serial, and the
+//   frame was +3.8 ms with chunks (pp63a/pp63b, GTX 1050 Ti, 1 player, MKW_FPS=60). With the head it begins 1.5-2.4
+//   ms after, as serial, and the frame is +0.28 ms with the scene balanced, within noise (hd3a/hd3b).
 // MKW_REPLAY_WALK=1 (diagnosis): the walk alone, timed, without chunks.
 #include <stdlib.h>
 #include <string.h>
@@ -128,6 +135,10 @@ static struct {
     int pre_from;         // tids[] checked ahead up to here
     int qleft;            // the submission's OP_QUEUE ops the walk has not reached: cuts kept for them
     uint64_t n_pipe;      // submissions whose first chunk was handed out before the walk ended
+    int head_draws;       // MKW_REPLAY_PAR_HEAD
+    int head_now;         // the walk is still in the serial head (the replay thread records each op)
+    int head_at;          // the walk's draws where the head ended (chunk 0 starts there); -1: no head ended
+    uint64_t n_head, head_ndraws, head_ns;   // heads ended, their draws and time
 } P;
 
 
@@ -230,8 +241,8 @@ static void publish(int upto) {
 // Ops the walk cannot leave once chunks are handed out, counted first (one pass over the submission, no state): a
 // samples-passed report or reset (serial), the queue switches (cuts kept for them) and the arrays' sizes (no realloc
 // while threads read them); it notes the texture slots for the check ahead, too. 0: the submission stays serial.
-static int prescan(const uint64_t *handles, int n, int *nupd, int *ncond, int *nqueue) {
-    Pos p = {0, 0, nvn_op_first(handles[0]), {0}};
+static int prescan(const Pos *from, const uint64_t *handles, int n, int *nupd, int *ncond, int *nqueue) {
+    Pos p = *from;
     *nupd = *ncond = *nqueue = 0;
     while (settle(&p, handles, n)) {
         const op_hdr *h = p.h;
@@ -278,7 +289,7 @@ static void chunk_add(const Pos *p, const VkExec *st) {
     c->done.n = 0, c->ulog.nhit = c->ulog.nhpos = 0;
     memset(&c->counters, 0, sizeof c->counters);
     *c->ex = *st;
-    if (P.nch == 1) P.ch0_draws += (uint64_t)P.wdraws;
+    if (P.nch == 1) P.ch0_draws += (uint64_t)(P.wdraws - (P.head_at > 0 ? P.head_at : 0));
     __atomic_store_n(&P.nch, P.nch + 1, __ATOMIC_RELEASE);
     publish(P.nch - 1);
 }
@@ -286,6 +297,51 @@ static void chunk_add(const Pos *p, const VkExec *st) {
 // Draws of chunk k: the first ones grow from MKW_REPLAY_PAR_FIRST (64, doubling) up to C, so the GPU starts about as
 // early as with the serial replay's 64-draw parts. With C draws from the first chunk the GPU waited for the whole
 // first chunk, ~3-4 ms with every thread recording (pab2/pab2i: fence wait +3.5 ms, GPU busy +0.8).
+// The rest of the submission from chunk 0's start, recorded serially on the replay thread: after a serial head, when
+// the rest did not go in chunks (nothing was handed out, and the replay state is the one at chunk 0's start).
+static void serial_rest(void) {
+    Pos p = P.ch[0].pos;
+    while (settle(&p, P.handles, P.n)) {
+        const op_hdr *h = p.h;
+        p.h = nvn_op_next(h);
+        if (vk_exec_op(P.ex, h)) vk_exec_drew(P.ex);
+    }
+}
+
+// Ops that end the serial head: what prescan rules out (the rest then stays serial) and conditions, which the walk
+// decides from the submission's earlier reports.
+static int head_stop(const op_hdr *h, const void *a) {
+    if (h->op == OP_RENDER_COND) return 1;
+    if (h->op == OP_REPORT_COUNTER) return ((const p_report_counter *)a)->type == NVN_COUNTER_TYPE_SAMPLES_PASSED;
+    if (h->op == OP_RESET_COUNTER) return ((const p_reset_counter *)a)->type == NVN_COUNTER_TYPE_SAMPLES_PASSED;
+    return 0;
+}
+
+// The serial head ends at op `at` (the replay state there is w's): chunk 0 starts there, and the prescan and slot
+// check cover the rest. 0: the rest stays serial (vk_exec_par records it, serial_rest).
+static int head_end(const Pos *at, const VkExec *w, int draws) {
+    Chunk *c = &P.ch[0];
+    c->pos = *at, c->op0 = P.plan_ops, c->upd0 = P.nupd, c->cond0 = P.ncond;
+    c->dimg0 = P.dimg_over || P.depth_off ? -1 : P.ndimg;
+    *c->ex = *w;
+    P.head_now = 0, P.head_at = draws;
+    P.n_head++, P.head_ndraws += (uint64_t)draws, P.head_ns += kern_now_ns() - P.t_walk;
+    int nupd, ncond, nq;
+    P.ntid = P.pre_from = 0;
+    if (P.precheck)
+        for (int s = 0; s < NVN_BIND_STAGES; s++) tid_note(w->tex[s], 128);
+    if (!prescan(at, P.handles, P.n, &nupd, &ncond, &nq)) return 0;
+    if (P.precheck) precheck();
+    nupd += P.nupd, ncond += P.ncond;
+    if (nupd > P.cupd && !(P.upd = realloc(P.upd, sizeof *P.upd * (size_t)(P.cupd = nupd + 1024))))
+        rt_fatal("vk: out of memory (replay chunks)");
+    if (ncond > P.ccond && !(P.cond = realloc(P.cond, sizeof *P.cond * (size_t)(P.ccond = ncond + 64))))
+        rt_fatal("vk: out of memory (replay chunks)");
+    P.qleft = nq;
+    P.t_walk = kern_now_ns();
+    return 1;
+}
+
 static int chunk_size(int k, int C) {
     if (P.first_draws <= 0) return C;
     int s = P.first_draws << (k < 16 ? k : 16);
@@ -299,6 +355,8 @@ static int chunk_size(int k, int C) {
 // GPU busy +2.7 ms a frame with 10 chunks); at twice its draws without a change, it is cut anyway. Not where only the
 // layer of the depth image changes: the layered depth clears (vk_exec.c dc_layered, GPU -2.8 ms a frame, rt-z5) clear
 // every layer of the shadow map at once only within the chunk that bound it first.
+// With a serial head (P.head_now), the replay thread records each op as the walk follows it, and the head ends where a
+// chunk could be cut once it has P.head_draws draws. 2: the head took the whole submission (recorded serially).
 static int plan(const VkExec *ex0, const uint64_t *handles, int n, int C) {
     VkExec *w = &P.end;
     *w = *ex0;
@@ -317,7 +375,12 @@ static int plan(const VkExec *ex0, const uint64_t *handles, int n, int C) {
         const void *a = nvn_op_payload(h);
         Pos at = p;   // the op itself: a cut before it starts the next chunk there
         p.h = nvn_op_next(h);
-        if (P.cut_op && P.plan_ops == (uint64_t)P.cut_op && P.nch + P.qleft < MAX_CHUNKS) in_chunk = 0, chunk_add(&at, w);
+        if (P.head_now && head_stop(h, a)) {
+            if (!head_end(&at, w, draws)) return 0;
+            in_chunk = 0;
+        }
+        if (!P.head_now && P.cut_op && P.plan_ops == (uint64_t)P.cut_op && P.nch + P.qleft < MAX_CHUNKS)
+            in_chunk = 0, chunk_add(&at, w);
         if (P.oplog[1] && draws >= P.oplog[0] && draws <= P.oplog[1])
             rt_log("vk: par oplog: submission %llu after draw %d: op %llu %s", (unsigned long long)P.subs, draws,
                    (unsigned long long)P.plan_ops, nvn_op_name(h->op));
@@ -327,8 +390,13 @@ static int plan(const VkExec *ex0, const uint64_t *handles, int n, int C) {
                 const p_set_rt *r = a;
                 const VkTexImage *di = r->depth ? vk_texture_get(r->depth) : NULL;
                 VkImage dimg = di ? di->image : VK_NULL_HANDLE;
-                if (!P.cut && !P.cut_op && in_chunk >= chunk_size(P.nch - 1, C) && P.nch + P.qleft < MAX_CHUNKS &&
-                    (P.depth_off || ((!dimg || dimg != P.wdimg) && !P.dc_img)))
+                int fits = P.nch + P.qleft < MAX_CHUNKS && (P.depth_off || ((!dimg || dimg != P.wdimg) && !P.dc_img));
+                if (P.head_now) {
+                    if (fits && draws >= P.head_draws) {
+                        if (!head_end(&at, w, draws)) return 0;
+                        in_chunk = 0;
+                    }
+                } else if (!P.cut && !P.cut_op && in_chunk >= chunk_size(P.nch - 1, C) && fits)
                     in_chunk = 0, chunk_add(&at, w);
                 P.wdimg = dimg, P.wdlayers = di ? di->layers : 0;
                 if (dimg) dimg_note(dimg);
@@ -359,7 +427,7 @@ static int plan(const VkExec *ex0, const uint64_t *handles, int n, int C) {
             // the op, which the chunk ending at it skips: that chunk's end is the switch's pass end and full barrier.
             // Serial before (16/11/2026, #449: no 2-player submission went in chunks).
             if (P.qleft) P.qleft--;
-            if (vk_exec_queue_swap(&P.wq, w, ((const p_queue *)a)->id)) {
+            if (vk_exec_queue_swap(&P.wq, w, ((const p_queue *)a)->id) && !P.head_now) {
                 Chunk *c = &P.ch[P.nch - 1];
                 if (c->op0 == P.plan_ops) {   // nothing in the chunk yet (the submission's first op): it starts after
                     c->pos = p, c->op0 = P.plan_ops + 1, *c->ex = *w;
@@ -401,17 +469,18 @@ static int plan(const VkExec *ex0, const uint64_t *handles, int n, int C) {
             if (is_draw(h->op)) {
                 draws++, P.wdraws = draws;
                 if (P.pipe_now && !(draws & 31) && P.sent < P.avail) send_ready(0);   // the chunks done meanwhile
-                if (P.cut_op ? 0 : P.cut ? draws == P.cut
+                if (P.head_now ? 0 : P.cut_op ? 0 : P.cut ? draws == P.cut
                              : ++in_chunk >= 2 * chunk_size(P.nch - 1, C) && P.inpass && P.nch + P.qleft < MAX_CHUNKS && !P.dc_img)
                     P.plan_ops++, in_chunk = 0, chunk_add(&p, w), P.plan_ops--, P.n_inpass += !P.cut;
             } else if (!vk_exec_state_op(w, h->op, a) && !vk_exec_bind_state(w, h->op, a)) {
                 vk_exec_xfer_state(w, h->op, a);
             }
         }
+        if (P.head_now && vk_exec_op(P.ex, h)) vk_exec_drew(P.ex);
         P.plan_ops++;
     }
     P.plan_draws = draws;
-    return 1;
+    return P.head_now ? 2 : 1;
 }
 
 // A begun command buffer of thread t's pool for the submission of value fence.
@@ -530,7 +599,13 @@ static void worker_main(void *arg) {
 }
 
 static void setup(void) {
-    P.mode = rt_knob("REPLAY_PAR", "0");
+    // On by default with 6+ physical cores: with the serial head it is neutral where the GPU sets the frame, with 1
+    // player (hd3a/hd3b: +0.28 ms) and 2 (hd4a/hd4b: +0.50 ms, the recording 34 -> 30 ms), i5-8400 with 6 cores and
+    // a GTX 1050 Ti; it gains where the recording sets it. Off below: on a Steam Deck's 4 cores (8 threads, hence not
+    // plat_cpu_count) the chunk threads took the game's CPU, 2 players 25.4 -> 22 fps (#449, before the head). 0 when
+    // the core count is unknown.
+    uint64_t all, first;
+    P.mode = rt_knob("REPLAY_PAR", plat_cpu_cores(&all, &first) >= 6 ? "1" : "0");
     const char *e = cfg_get("MKW_REPLAY_WALK");
     P.walk_diag = e && atoi(e) > 0;
     e = cfg_get("MKW_REPLAY_PAR_DRAWS");
@@ -549,6 +624,8 @@ static void setup(void) {
     // MKW_REPLAY_PAR_PIPE (default 1; "ab"; 0: the walk in full first, as before 16/11/2026): each chunk handed out
     // to the threads, and sent when ready, as soon as the walk is past its end (publish).
     P.pipe = rt_knob("REPLAY_PAR_PIPE", "1");
+    e = cfg_get("MKW_REPLAY_PAR_HEAD");   // draws of the serial head (with PIPE and threads); 0: none
+    P.head_draws = e ? atoi(e) : 256;
     e = cfg_get("MKW_REPLAY_PAR_THREADS");   // threads besides the replay thread
     uint32_t cpus = plat_cpu_count();
     P.threads = e ? atoi(e) : cpus >= 8 ? 3 : cpus >= 4 ? 2 : 1;
@@ -650,12 +727,14 @@ int vk_exec_par(VkExec *ex, const uint64_t *handles, int n, int diag) {
     // MKW_REPLAY_PAR_PIPE: chunks handed out from the walk (publish) once prescan rules out an op it could not leave;
     // the diagnoses that pick the chunks' order need them all first
     P.pipe_now = RT_KNOB_ON(P.pipe) && !P.reverse && !P.norder;
-    if (P.pipe_now) {
+    P.head_now = P.pipe_now && P.threads && P.head_draws > 0, P.head_at = -1;
+    if (P.pipe_now && !P.head_now) {
         int nupd, ncond, nq;
         P.ntid = P.pre_from = 0;
         if (P.precheck)
             for (int s = 0; s < NVN_BIND_STAGES; s++) tid_note(ex->tex[s], 128);
-        if (!prescan(handles, n, &nupd, &ncond, &nq)) return 0;
+        Pos p0 = {0, 0, nvn_op_first(handles[0]), {0}};
+        if (!prescan(&p0, handles, n, &nupd, &ncond, &nq)) return 0;
         // Every slot checked here, before any chunk is out: checked chunk by chunk during the walk, the check held
         // tex_lock while the threads recorded, 298 ms a second of their sleeps, and chunk 0's 60 draws took 3.3 ms
         // instead of ~1.2 (lk62, 16/11/2026).
@@ -667,8 +746,14 @@ int vk_exec_par(VkExec *ex, const uint64_t *handles, int n, int diag) {
         P.qleft = nq;
     }
     P.t_walk = kern_now_ns(), P.wdraws = 0;
-    if (!plan(ex, handles, n, P.chunk_draws)) return 0;
-    if (P.nch < 2) return P.n_serial[WHY_FEW]++, 0;
+    int r = plan(ex, handles, n, P.chunk_draws);
+    if (r == 2) return P.n_serial[WHY_FEW]++, 2;   // the head took it all
+    if (!r || P.nch < 2) {
+        if (P.nch < 2) P.n_serial[WHY_FEW]++;   // (bail already stops when chunks are out)
+        if (P.head_at < 0) return 0;
+        serial_rest();   // the head was recorded: the rest from where it ended
+        return 2;
+    }
     if (!P.avail) P.ch0_pub_ns += kern_now_ns() - P.t_walk;   // (handed out below)
     if (P.precheck) precheck();
     if (!P.avail) job_start();
@@ -715,7 +800,8 @@ void vk_exec_par_log(void) {
                "cuts inside a pass %.1f, at a queue switch %.1f a submission (MKW_REPLAY_PAR_INPASS); "
                "slots checked ahead %.0f per frame in %.3f ms (MKW_REPLAY_PAR_PRECHECK); "
                "chunks handed out during the walk in %llu submissions (MKW_REPLAY_PAR_PIPE); first chunk %.0f draws, "
-               "handed out %.2f ms after the walk began and recorded %.2f ms after that", (unsigned long long)P.n_par,
+               "handed out %.2f ms after the walk began and recorded %.2f ms after that; "
+               "serial heads %llu of %.0f draws in %.2f ms (MKW_REPLAY_PAR_HEAD)", (unsigned long long)P.n_par,
                P.n_par ? (double)P.n_chunks / (double)P.n_par : 0, P.n_par ? (double)P.n_draws / (double)P.n_par : 0,
                (unsigned long long)(P.n_serial[WHY_REPORT] + P.n_serial[WHY_RESET] + P.n_serial[WHY_COND] +
                                     P.n_serial[WHY_QUEUE]),
@@ -727,8 +813,11 @@ void vk_exec_par_log(void) {
                (unsigned long long)P.n_cond, P.n_par ? (double)P.n_inpass / (double)P.n_par : 0,
                P.n_par ? (double)P.n_qcut / (double)P.n_par : 0, (double)P.n_pre / (double)nf, (double)P.pre_ns / 1e6 / (double)nf,
                (unsigned long long)P.n_pipe, P.n_par ? (double)P.ch0_draws / (double)P.n_par : 0,
-               P.n_par ? (double)P.ch0_pub_ns / 1e6 / (double)P.n_par : 0, P.n_par ? (double)P.ch0_rdy_ns / 1e6 / (double)P.n_par : 0);
+               P.n_par ? (double)P.ch0_pub_ns / 1e6 / (double)P.n_par : 0, P.n_par ? (double)P.ch0_rdy_ns / 1e6 / (double)P.n_par : 0,
+               (unsigned long long)P.n_head, P.n_head ? (double)P.head_ndraws / (double)P.n_head : 0,
+               P.n_head ? (double)P.head_ns / 1e6 / (double)P.n_head : 0);
     P.walk_ns = P.rec_ns = P.max_rec_ns = P.first_ns = P.n_par = P.n_chunks = P.n_draws = P.drops_early = P.w_subs = P.n_cond = P.n_again = 0;
     P.n_inpass = P.n_qcut = P.n_pre = P.pre_ns = P.n_pipe = P.ch0_draws = P.ch0_pub_ns = P.ch0_rdy_ns = 0;
+    P.n_head = P.head_ndraws = P.head_ns = 0;
     memset(P.n_serial, 0, sizeof P.n_serial);
 }
