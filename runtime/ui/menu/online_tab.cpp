@@ -140,6 +140,7 @@ static void submit(int action, const char *endpoint = "") {
 void online_tab(float scale, float bottom) {
     if (!initialized) {
         initialized = true;
+        net_clients_start();
         const char *n = cfg_get("MKW_NETWORK");
         for (int i = 0; n && i < 3; i++) if (!strcmp(n, networks[i])) network = i;
         submit(REFRESH);
@@ -204,6 +205,35 @@ void online_tab(float scale, float bottom) {
     if (ImGui::Button(menu_text(UI_F1_OFF))) submit(OFF);
     ImGui::EndDisabled();
     if (*view.server) ImGui::TextWrapped("%s: %s", menu_text(UI_ONLINE_SERVER), view.server);
+    if (view.enabled) {
+        NetParty party;
+        net_party_snapshot(&party);
+        if (strcmp(party.server, view.server) || !party.reached) {
+            ImGui::TextWrapped("%s", *party.error ? party.error : menu_text(UI_F1_CLIENTS_WAIT));
+        } else if (*party.error) {
+            ImGui::TextWrapped("%s", party.error);
+        } else {
+            char title[120];
+            snprintf(title, sizeof title, menu_text(UI_F1_CLIENTS), party.nclients);
+            ImGui::SeparatorText(title);
+            for (int i = 0; i < party.nclients; i++) {
+                char code[18];
+                net_format_code(party.clients[i].code, code);
+                ImGui::TextWrapped("%s%s%s (%s)", *party.clients[i].name ? party.clients[i].name : code,
+                                   *party.clients[i].name ? " - " : "", *party.clients[i].name ? code : "",
+                                   menu_text(party.clients[i].online ? UI_F1_CLIENT_GAME : UI_F1_CLIENT_ONLY));
+            }
+            if (*party.room) {
+                snprintf(title, sizeof title, menu_text(UI_F1_PARTY_ROOM), party.room);
+                ImGui::SeparatorText(title);
+                for (int i = 0; i < party.nmembers; i++) {
+                    char code[18];
+                    net_format_code(party.members[i].code, code);
+                    ImGui::TextWrapped("%s", *party.members[i].name ? party.members[i].name : code);
+                }
+            } else ImGui::TextWrapped("%s", menu_text(UI_F1_PARTY_NONE));
+        }
+    }
     if (*view.status) ImGui::TextWrapped("%s", view.status);
     if (view.restart) ImGui::TextWrapped("%s", menu_text(UI_F1_RESTART));
     if (changing) ImGui::TextUnformatted("...");

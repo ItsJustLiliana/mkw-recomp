@@ -82,8 +82,11 @@ static void obs_clock_gettime(Cpu *c) {
     // CLOCK_REALTIME: the SDK's goes through a time service hook the runtime never sets and fails (-1, the timespec
     // left as it was: measured 12/11/2026 at main+0x104b1e8); the host's wall clock is the network clock already
     // (ov_system.c StandardNetworkSystemClock), so it is the real time here too.
-    if (id == 0 && ts) {
-        uint64_t ns = plat_unix_time_ns();
+    // 1.8.0's libc++ steady_clock::now uses CLOCK_MONOTONIC (1). Its SDK hook is unset here and returns EAGAIN;
+    // entering Online Play then throws system_error and crashes in operator new (user log, 16/11/2026).
+    // Both clocks are SDK API replacements, not calls through the console's unavailable time hooks.
+    if ((id == 0 || id == 1) && ts) {
+        uint64_t ns = id == 0 ? plat_unix_time_ns() : plat_now_ns();
         ts[0] = (int64_t)(ns / 1000000000ull);
         ts[1] = (int64_t)(ns % 1000000000ull);
         return ret_x(c, 0);

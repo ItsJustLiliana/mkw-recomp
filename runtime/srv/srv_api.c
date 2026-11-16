@@ -17,6 +17,7 @@
 #include "srv_auth.h"
 #include "srv_presence.h"
 #include "srv_store.h"
+#include "srv_session.h"
 
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
@@ -303,9 +304,77 @@ static void friends_op(SrvApi *a, const Req *r, SrvAccount *me, const char *op) 
     else friends_json(a, me);
 }
 
+// Runtime presence is distinct from game sign-in and room membership. A configured address or a TCP probe is
+// not a connected player: clients refresh this authenticated lease every 5 s, including with F1 closed.
+enum { CLIENT_MAX = 64, CLIENT_LEASE_MS = 20000 };
+static struct { uint64_t code, at; } clients[CLIENT_MAX];
+
+static void client_row(Text *t, uint64_t code, int comma) {
+    SrvAccount *account = srv_account(code);
+    tput(t, "%s{\"code\":\"%012llu\",\"name\":\"", comma ? "," : "", (unsigned long long)code);
+    json_str(t, account ? account->name : "");
+    tput(t, "\",\"online\":%s}", srv_online(code) ? "true" : "false");
+}
+
+static void client_status(SrvApi *a, const Req *r, int leave) {
+    if (strcmp(r->method, "POST")) return reply_error(a, 405, "POST only");
+    size_t digits = strlen(r->code), secret_len = strlen(r->secret);
+    int valid = digits == 12 && secret_len >= 32 && secret_len <= 128;
+    for (size_t i = 0; i < digits; i++) valid &= isdigit((unsigned char)r->code[i]) != 0;
+    for (size_t i = 0; i < secret_len; i++) valid &= isxdigit((unsigned char)r->secret[i]) != 0;
+    uint64_t code = valid ? strtoull(r->code, NULL, 10) : 0;
+    if (!code) return reply_error(a, 403, "invalid client credentials");
+    char hash[65];
+    srv_secret_hash(r->secret, hash);
+    SrvAccount *me = srv_account(code);
+    if (!me && !leave) {
+        const char *mode = srv_setting("registration", "open");
+        if (!strcmp(mode, "closed")) return reply_error(a, 403, "registration closed");
+        me = srv_account_add(code, hash, strcmp(mode, "approval") != 0);
+    }
+    if (!me || !srv_secret_equal(me->secret, hash) || me->banned || !me->approved)
+        return reply_error(a, 403, "client not authorized");
+    uint64_t now = srv_ms();
+    int slot = -1, free_slot = -1;
+    for (int i = 0; i < CLIENT_MAX; i++) {
+        if (clients[i].code && now - clients[i].at >= CLIENT_LEASE_MS) clients[i].code = 0;
+        if (clients[i].code == code) slot = i;
+        if (!clients[i].code) free_slot = i;
+    }
+    if (leave) {
+        if (slot >= 0) clients[slot].code = 0;
+        Text t = {0};
+        tput(&t, "{\"ok\":true}");
+        return reply_json(a, 200, &t);
+    }
+    if (slot < 0) slot = free_slot;
+    if (slot < 0) return reply_error(a, 503, "client limit reached");
+    clients[slot].code = code;
+    clients[slot].at = now;
+    Text t = {0};
+    tput(&t, "{\"clients\":[");
+    int n = 0;
+    for (int i = 0; i < CLIENT_MAX; i++) if (clients[i].code) client_row(&t, clients[i].code, n++);
+    char uid[24];
+    snprintf(uid, sizeof uid, "u-%016llx", (unsigned long long)code);
+    SrvSession *room = srv_session_recent(uid);
+    if (room && room->closed) room = NULL;
+    tput(&t, "],\"room\":\"");
+    json_str(&t, room ? (*room->alias ? room->alias : room->id) : "");
+    tput(&t, "\",\"members\":[");
+    if (room) {
+        for (int i = 0; i < room->nmembers; i++)
+            client_row(&t, srv_uid_code(room->members[i].uid), i);
+    }
+    tput(&t, "]}");
+    reply_json(a, 200, &t);
+}
+
 static void handle(SrvApi *a, const Req *r) {
     if (too_many(a->ip, time(NULL))) {
         reply_error(a, 429, "too many requests: wait a minute");
+    } else if (!strcmp(r->path, "/v1/clients") || !strcmp(r->path, "/v1/clients/leave")) {
+        client_status(a, r, !strcmp(r->path, "/v1/clients/leave"));
     } else if (!strcmp(r->path, "/v1/ca.der")) {
         size_t n;
         const unsigned char *ca = srv_tls_ca(a->tls, &n);

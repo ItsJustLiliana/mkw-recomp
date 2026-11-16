@@ -66,6 +66,16 @@ typedef struct {
     int nfriends, nreceived, nsent;
 } NetFriendLists;
 void net_friends_get(const char *server, NetFriendLists *out);
+
+typedef struct {
+    char server[160], room[32], error[200];
+    NetFriend clients[NET_MAX_CODES], members[NET_MAX_CODES];
+    int nclients, nmembers, reached;
+} NetParty;
+// A 5-second background lease, independent of F1 drawing. Includes only live runtime clients and actual game
+// room members, never inferred from the selected server. Snapshot reads do no disk or network work.
+void net_clients_start(void);
+void net_party_snapshot(NetParty *out);
 // op: request, accept, decline, cancel, remove. "" on success, else why not (from the server when it said).
 const char *net_friends_do(const char *server, const char *op, const char *code, char *err, size_t cap);
 

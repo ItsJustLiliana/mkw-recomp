@@ -825,3 +825,66 @@ const char *net_probe(const char *server, char *err, size_t cap) {
              s.ip[2], s.ip[3], s.port);
     return err;
 }
+
+
+// F1 reads this cache only. HTTPS, certificate/profile I/O and leases stay on a dedicated worker even when the
+// menu is closed. The lease is not gameplay presence; that comes from the game's own server session.
+static PlatMutex party_lock = PLAT_MUTEX_INIT;
+static NetParty party_cache;
+static volatile int32_t clients_started;
+
+static void party_request(const char *server, int leave, NetParty *out) {
+    NetProfile profile;
+    uint8_t *ca = NULL;
+    size_t ca_len = 0;
+    memset(out, 0, sizeof *out);
+    snprintf(out->server, sizeof out->server, "%s", server);
+    if (!load_for_api(server, &profile, &ca, &ca_len, out->error, sizeof out->error)) return;
+    Reply reply;
+    const char *why = https(server, "POST", leave ? "/v1/clients/leave" : "/v1/clients", "", &profile,
+                            ca, ca_len, &reply, out->error, sizeof out->error);
+    free(ca);
+    if (*why) return;
+    out->reached = 1;
+    if (reply.status != 200 || !reply.body) {
+        const char *value = reply.body ? json_key(reply.body, reply.body + reply.len, "error") : NULL;
+        if (value) json_string(value, out->error, sizeof out->error);
+        if (!out->error[0]) snprintf(out->error, sizeof out->error, "client status HTTP %d (update the host)", reply.status);
+    } else if (!leave) {
+        json_entries(reply.body, "clients", out->clients, &out->nclients);
+        json_entries(reply.body, "members", out->members, &out->nmembers);
+        const char *room = json_key(reply.body, reply.body + reply.len, "room");
+        if (room) json_string(room, out->room, sizeof out->room);
+    }
+    free(reply.body);
+}
+
+static void clients_loop(void *arg) {
+    (void)arg;
+    char previous[160] = "";
+    for (;;) {
+        char server[160] = "";
+        const char *value = net_enabled() ? cfg_get("MKW_ONLINE_SERVER") : NULL;
+        if (value) snprintf(server, sizeof server, "%s", value);
+        NetParty next;
+        if (*previous && strcmp(previous, server)) party_request(previous, 1, &next);
+        memset(&next, 0, sizeof next);
+        if (*server) party_request(server, 0, &next);
+        snprintf(previous, sizeof previous, "%s", server);
+        plat_mutex_lock(&party_lock);
+        party_cache = next;
+        plat_mutex_unlock(&party_lock);
+        plat_sleep_ms(5000);
+    }
+}
+
+void net_clients_start(void) {
+    if (plat_cas32(&clients_started, 1, 0) != 0) return;
+    if (!plat_thread_spawn(clients_loop, NULL, "online presence", 0)) plat_xchg32(&clients_started, 0);
+}
+
+void net_party_snapshot(NetParty *out) {
+    plat_mutex_lock(&party_lock);
+    *out = party_cache;
+    plat_mutex_unlock(&party_lock);
+}

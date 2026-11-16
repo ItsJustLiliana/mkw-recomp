@@ -396,6 +396,32 @@ def api(server: Path, method: str, path: str, code: str = "", secret: str = "", 
     return r.status, json.loads(data) if r.getheader("Content-Type") == "application/json" else {"raw": data}
 
 
+def test_srv_client_presence(server: Path) -> None:
+    """Runtime clients are real authenticated leases, distinct from game sign-in and room membership."""
+    a, b = ("909090900001", "de" * 32), ("909090900002", "ed" * 32)
+    assert api(server, "GET", "/v1/clients", *a)[0] == 405
+    assert api(server, "POST", "/v1/clients", "not-a-code", a[1])[0] == 403
+    assert api(server, "POST", "/v1/clients", "000000000000", a[1])[0] == 403
+    status, first = api(server, "POST", "/v1/clients", *a)
+    assert status == 200 and first["room"] == "" and first["members"] == []
+    assert {x["code"]: x["online"] for x in first["clients"]}[a[0]] is False
+    assert api(server, "POST", "/v1/clients", a[0], "00" * 32)[0] == 403
+    status, both = api(server, "POST", "/v1/clients", *b)
+    assert status == 200 and {a[0], b[0]} <= {x["code"] for x in both["clients"]}
+    assert not any("secret" in x or "ip" in x for x in both["clients"])
+    h = H2(server)
+    sign_in(h, 1, *a)
+    wait(h, lambda: 1 in h.ended)
+    status, signed_in = api(server, "POST", "/v1/clients", *a)
+    assert status == 200 and {x["code"]: x["online"] for x in signed_in["clients"]}[a[0]] is True
+    assert signed_in["members"] == [], "signing in alone does not create a party"
+    assert api(server, "POST", "/v1/clients/leave", *b)[0] == 200
+    _, remaining = api(server, "POST", "/v1/clients", *a)
+    assert b[0] not in {x["code"] for x in remaining["clients"]}
+    api(server, "POST", "/v1/clients/leave", *a)
+    h.s.close()
+
+
 def test_srv_friends_api(server: Path) -> None:
     """Two players: a request by code (written SW-...), seen as sent and received, accepted; then each one's friend
     list, over the API and over the game's SubscribeFriendUsers stream. Wrong secret, unknown action and one's own code
@@ -611,6 +637,12 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     entries = [fields(e) for e in joined[1]]
     assert [e[2][0].decode().rsplit("/", 1)[1] for e in entries] == [f"us-{ua}", f"us-{ub}"]
     cred_b = entries[1][3][0]
+    # F1 shows only actual members of the caller's room, not everyone connected to this server.
+    _, party = api(server, "POST", "/v1/clients", "333333333333", "333333333333" * 2 + "ab" * 4)
+    assert party["room"] == digits
+    assert {x["code"] for x in party["members"]} == {"333333333333", "444444444444"}
+    _, outsider = api(server, "POST", "/v1/clients", "909090900003", "ce" * 32)
+    assert not outsider["room"] and not outsider["members"]
     ice = fields(unary(b, GSS + "AllocateIceServerSet", b"", tb)[2][0])
     assert ice[1] == [b"stun.npln.nintendo.net"] and ice[2] == [3478]
 

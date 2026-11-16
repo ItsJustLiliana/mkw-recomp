@@ -5,6 +5,7 @@ end's regression test runs over captures instead (`tools/test/`).
 
 | File | What it checks |
 |---|---|
+| `test_online_clock.py` | Production SDK clock observer: realtime and monotonic clocks succeed without console hooks, monotonic time ignores wall-clock corrections, unsupported IDs retain SDK behavior |
 | `test_online_input.py` | Headless SDL/ImGui regression for the real F1 text adapter and Online field: UTF-8, Ctrl+A, focus through status polling, queued clicks and SDL text-input lifecycle |
 | `test_net_invite.py` | The production F1 server invite codec: routing round trips, private-address limits, typo detection and malformed codes |
 | `test_lan_peers.py` | Compiles the production VPN peer helpers: local-address filtering, broadcast-only selection, bounded peer counts, settings reload and loopback binds; no game or GPU |

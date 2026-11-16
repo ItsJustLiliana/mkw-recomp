@@ -550,6 +550,7 @@ void net_error_notice(unsigned category, unsigned number) {
 }
 
 void net_host_boot(void) {
+    net_clients_start();
     const char *started = getenv("MKW_HOST_STARTED");
     if (!net_host_enabled() || (started && *started) || !net_host_available()) return;
     char err[200];

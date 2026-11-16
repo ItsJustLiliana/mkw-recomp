@@ -62,6 +62,9 @@ void net_addrs(NetAddrs *a) { memset(a, 0, sizeof *a); }
 const char *net_network_address(const NetAddrs *) { return ""; }
 int net_host_start(char *, size_t) { return -1; }
 void net_host_stop(void) {}
+void net_clients_start(void) {}
+void net_party_snapshot(NetParty *out) { memset(out, 0, sizeof *out); }
+void net_format_code(const char *, char out[18]) { out[0] = 0; }
 NetHostState net_host_state(char *, size_t) { return NET_HOST_OFF; }
 int net_host_firewall(void) { return -1; }
 const char *net_probe(const char *, char *, size_t) { return "unavailable"; }

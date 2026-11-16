@@ -3005,3 +3005,27 @@ msgid ""
 "Restart the game before using Online Play with these settings. Stopping the server disconnects "
 "its players."
 msgstr ""
+
+msgctxt "UI_F1_CLIENTS_WAIT"
+msgid "Checking server clients..."
+msgstr ""
+
+msgctxt "UI_F1_CLIENTS"
+msgid "Connected clients: %d"
+msgstr ""
+
+msgctxt "UI_F1_CLIENT_GAME"
+msgid "signed in to the game"
+msgstr ""
+
+msgctxt "UI_F1_CLIENT_ONLY"
+msgid "server connection only"
+msgstr ""
+
+msgctxt "UI_F1_PARTY_ROOM"
+msgid "Your game group: %s"
+msgstr ""
+
+msgctxt "UI_F1_PARTY_NONE"
+msgid "No game group joined yet. Create or join one through Online Play > Friends."
+msgstr ""

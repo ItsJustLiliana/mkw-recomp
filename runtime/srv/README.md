@@ -27,6 +27,12 @@ nghttp2 (MIT) and Mbed TLS (Apache-2.0), are fetched and pinned by `tools/build/
 
 Tests: `tests/test_srv.py` (`tests/c/t_srv.c`; with `MKW_SRV_EXE`, the built executable over UDP and TLS + HTTP/2).
 
+The F1 roster uses authenticated `POST /v1/clients` heartbeats (every 5 seconds, 20-second leases, at most 64 clients)
+and `POST /v1/clients/leave` on server changes/offline. `srv_api.c` binds the same friend code and secret as the game
+account, applies registration/approval/ban checks, and returns client names/codes plus only the caller's actual room
+members. Runtime presence, game sign-in and room membership are separate; selecting a server or probing a TCP port
+does not count as a connected client. The existing API request/connection limits apply. Secrets and IPs are not listed.
+
 On Windows, `srv_main.c` creates `Local\MKWRecompServerStop-<pid>` and writes its PID under the data directory.
 `net_host.c` signals that event for a normal F1 Stop, including when the launcher owns the process. The loop then
 closes sockets and flushes the store before deleting the PID file. A PID read from disk is never used to kill a process.

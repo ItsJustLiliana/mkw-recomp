@@ -123,6 +123,18 @@ checks pass. The shared Online settings tab was rendered and visually inspected 
 These checks are not proof of two clients completing a race. Use the acceptance checklist above before calling it
 working multiplayer. The user's existing executable must be closed before a new build can replace it.
 
+F1 now lists authenticated runtime clients separately from game-room members. A dedicated background worker renews
+the client lease every 5 seconds even while F1 is closed. Clients that disappear expire after 20 seconds; selecting
+a server alone does not create a room. Each row distinguishes server connectivity from game sign-in. The room list
+comes from the server's actual session for that player and is not the whole server's client list. Both PCs and the
+host need the updated build. Old servers report that the client-status API is unavailable.
+
+The reported 1.8.0 Online Play crash was traced to SDK libc++ `steady_clock::now()` calling `clock_gettime(1)` through
+an unavailable console time hook. `ov_time2.c` now supplies CLOCK_MONOTONIC from `plat_now_ns()` as well as realtime
+from the wall clock. A standalone regression covers both clocks and wall-clock adjustments. A real 1.8.0 run with
+a build-local profile copy reached the Online Play mode page and signed in successfully after this fix. A two-PC
+race and private group creation in the real game remain unverified.
+
 Next: test actual Online Play sign-in and a private room with two game clients, then complete a race and test guest
 and host disconnects. Keep the existing LAN fallback available throughout. Defer the standalone launcher and public
 server directory until this path is validated.
