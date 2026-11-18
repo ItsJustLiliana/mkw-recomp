@@ -252,7 +252,6 @@ def ninja_file(target: Target, gen: Path | None, out: Path, rt_extra: list[str],
     release ships and the CI builds, without the game's generated C. srv: the online server's libraries
     (tools/build/srvdeps.py), compiled with their own flags into libsrvdeps.a, linked into the executable."""
     inc = " ".join(f"-I{d}" for d in sorted({RUNTIME} | {p.parent for p in RUNTIME.rglob("*.h")}))
-    gen_inc = f"-I{gen}" if gen else ""  # --runtime-only has no generated C (it wrote -INone)
     gid = f'-DRT_GAME_ID=\\"{game_id()}\\"'
     pic = ["-fPIC"] if dist and target is LINUX else []
     link_flags = list(target.link_flags) + (ld_extra or [])
