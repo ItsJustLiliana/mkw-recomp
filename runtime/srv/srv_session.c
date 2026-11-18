@@ -913,6 +913,7 @@ void srv_session_tick(uint64_t now) {
             !srv_session_find(tickets[i].session))
             ticket_free(&tickets[i]);
     for (int i = 0; i < nsessions; i++) {   // races whose players all wait: nobody writes to close them
+        srv_gs_tick(sessions[i], now);
         referee_tick(&sessions[i]->referee, &sessions[i]->docs, now, (int64_t)time(NULL));
         if (sessions[i]->docs.nchanged) srv_gs_changed(sessions[i], 0);
     }

@@ -18,7 +18,8 @@
 
 // A stream's targets: TARGETS_MAX, holding at most LISTEN_BYTES of paths together. A request's writes: WRITES_MAX (the
 // game sends a handful; each looks its path up among the session's documents).
-enum { TARGETS_MAX = 32, LISTEN_BYTES = 16 << 10, WRITES_MAX = 1024, GS_TOKEN_S = 3600 };
+enum { TARGETS_MAX = 32, LISTEN_BYTES = 16 << 10, WRITES_MAX = 1024, GS_TOKEN_S = 3600,
+       RECONNECT_GRACE_MS = 15000 };
 enum { DC_ADDED = 1, DC_MODIFIED = 2, DC_REMOVED = 3 };                  // DocumentChange kinds
 enum { TC_ADDED = 1, TC_CURRENT = 2, TC_REMOVED = 3, TC_ERROR = 4 };    // TargetChange states
 
@@ -35,6 +36,7 @@ typedef struct Listener {
     SrvCall *call;
     char session[24], uid[24];
     int bound;     // its token names a session: it gets that session's documents
+    int deliberate_close; // client half-closed: final departure should not be delayed
     Target t[TARGETS_MAX];
     int nt;
     size_t bytes;  // the targets' paths
@@ -335,7 +337,13 @@ static void listen_msg(SrvCall *c, const uint8_t *msg, size_t len) {
             snprintf(L->session, sizeof L->session, "%s", s->id);
             s->listeners++;
             SrvMember *m = srv_member(s, L->uid);
-            if (m) m->streams++;
+            if (m) {
+                m->streams++;
+                if (m->reconnect_deadline_ms) {
+                    srv_log("gamesync reconnect session=%s member=%s: previous stream recovered", s->id, L->uid);
+                    m->reconnect_deadline_ms = 0;
+                }
+            }
             srv_log("gamesync listen open session=%s member=%s streams=%d listeners=%d",
                     s->id, L->uid, m ? m->streams : 0, s->listeners);
         } else {
@@ -360,7 +368,11 @@ static void listen_msg(SrvCall *c, const uint8_t *msg, size_t len) {
 }
 
 // A player leaving half-closes and waits: the stream ends at once (after what is pending), or some flows give up.
-static void listen_half(SrvCall *c) { srv_call_end(c, ST_OK, NULL); }
+static void listen_half(SrvCall *c) {
+    Listener **lp = (Listener **)srv_call_state(c);
+    if (lp && *lp) (*lp)->deliberate_close = 1;
+    srv_call_end(c, ST_OK, NULL);
+}
 
 // ---- writes
 typedef struct {
@@ -523,16 +535,41 @@ static void listen_close(SrvCall *c) {
         srv_log("gamesync listen close session=%s member=%s streams=%d listeners=%d targets=%d",
                 s->id, L->uid, m ? m->streams : 0, s->listeners, L->nt);
         s->changed_ms = srv_ms();   // the idle clock starts again when a listener goes
-        // Deferred writes belong to the player, not a particular stream. Closing a
-        // superseded/reconnecting KeepUserSession stream must not delete participation
-        // while another stream is still listening for this player.
+        // A transport reset can close the last stream before its replacement arrives.
+        // Do not publish the deferred participant deletion to the other racers yet:
+        // it makes a momentary stream reset look like the peer left the race.
+        // An intentional gRPC half-close is still a final departure immediately.
         if (m && !m->streams) {
-            run_deferments(s, L->uid);
-            srv_session_leave(s, L->uid);   // rooms only: matchmade members stay
+            if (L->deliberate_close) {
+                m->reconnect_deadline_ms = 0;
+                run_deferments(s, L->uid);
+                srv_session_leave(s, L->uid);   // rooms only: matchmade members stay
+            } else {
+                uint64_t now = srv_ms();
+                m->reconnect_deadline_ms = now > UINT64_MAX - RECONNECT_GRACE_MS
+                                         ? UINT64_MAX : now + RECONNECT_GRACE_MS;
+                srv_log("gamesync grace session=%s member=%s %d ms for reconnect",
+                        s->id, L->uid, RECONNECT_GRACE_MS);
+            }
         }
     }
     for (int k = 0; k < L->nt; k++) target_free(&L->t[k]);
     free(L);
+}
+
+// Resolve unexpected stream closure only once the client has had time to
+// reconnect. Iterate backwards: leaving a room removes/compacts its member.
+void srv_gs_tick(SrvSession *s, uint64_t now_ms) {
+    for (int i = s->nmembers - 1; i >= 0; i--) {
+        SrvMember *m = &s->members[i];
+        if (m->streams || !m->reconnect_deadline_ms || now_ms < m->reconnect_deadline_ms) continue;
+        char uid[24];
+        snprintf(uid, sizeof uid, "%s", m->uid);
+        m->reconnect_deadline_ms = 0;
+        srv_log("gamesync grace expired session=%s member=%s: final departure", s->id, uid);
+        run_deferments(s, uid);
+        srv_session_leave(s, uid);
+    }
 }
 
 // ---- GetDocument {1: "docs/<path>"} and WriteDocuments {1: repeated Write, 2: repeated DefermentChange}
