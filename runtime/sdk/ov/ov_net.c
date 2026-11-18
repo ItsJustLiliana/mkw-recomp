@@ -335,11 +335,33 @@ typedef struct {
     HostSock w;             // an eventfd's write end
     uint64_t value;         // an eventfd's counter
     int semaphore;
+    uint64_t udp_tx_packets, udp_rx_packets, udp_tx_bytes, udp_rx_bytes;
+    uint32_t udp_errors;
     struct { uint32_t level, name, len; uint8_t v[16]; } opt[GFD_OPTS];   // set options, read back as set (gRPC)
     int nopt;
 } GFd;
 static GFd gfd[GFD_MAX];
 static PlatMutex fd_lock = PLAT_MUTEX_INIT;
+
+// Opt-in packet *metadata* (never payloads): MKW_NET_TRACE=1 in the process
+// environment. Rate-limited to the first packet, then every 256 packets /
+// first 12 UDP errors per socket, to remain useful during long races.
+static int udp_trace(void) { return cfg_bool("MKW_NET_TRACE"); }
+static void udp_log_io(GFd *f, int fd, int tx, long n, int err) {
+    if (!udp_trace() || !f || f->type != 2) return;
+    if (n < 0) {
+        uint32_t count = __atomic_add_fetch(&f->udp_errors, 1, __ATOMIC_RELAXED);
+        if (err != G_EAGAIN && (count <= 12 || count % 128 == 0))
+            rt_log("net-udp: fd=%d %s error=%d (socket error #%u)", fd, tx ? "send" : "recv", err, count);
+        return;
+    }
+    uint64_t packets = __atomic_add_fetch(tx ? &f->udp_tx_packets : &f->udp_rx_packets, 1, __ATOMIC_RELAXED);
+    uint64_t bytes = __atomic_add_fetch(tx ? &f->udp_tx_bytes : &f->udp_rx_bytes, (uint64_t)n, __ATOMIC_RELAXED);
+    if (packets == 1 || packets % 256 == 0)
+        rt_log("net-udp: fd=%d %s packets=%llu bytes=%llu", fd, tx ? "tx" : "rx",
+               (unsigned long long)packets, (unsigned long long)bytes);
+}
+
 
 static void sock_startup(void) {
 #ifdef _WIN32
@@ -458,6 +480,7 @@ static void ov_socket(Cpu *c) {
     gfd[fd].s = s;
     gfd[fd].type = type;
     gfd[fd].nonblock = nonblock;
+    if (type == 2 && udp_trace()) rt_log("net-udp: opened fd=%d nonblock=%d", fd, nonblock);
     ret_x(c, (uint64_t)fd);
 }
 
@@ -502,7 +525,12 @@ static void ov_bind(Cpu *c) {
     if (!to_host_addr(arg_p(c, 1), (uint32_t)arg_x(c, 2), &h)) return ret_fail(c, G_EINVAL);
     if (lan_refused(c, &h, "Bind")) return ret_x(c, (uint64_t)-1);
     if (!h.sin_addr.s_addr) h.sin_addr.s_addr = ov_lan_bind_address();
-    if (bind(f->s, (struct sockaddr *)&h, sizeof h)) return ret_fail(c, host_error());
+    if (bind(f->s, (struct sockaddr *)&h, sizeof h)) {
+        int e = host_error();
+        if (f->type == 2 && udp_trace()) rt_log("net-udp: bind fd=%d port=%u failed errno=%d", (int)arg_x(c, 0), ntohs(h.sin_port), e);
+        return ret_fail(c, e);
+    }
+    if (f->type == 2 && udp_trace()) rt_log("net-udp: bind fd=%d port=%u", (int)arg_x(c, 0), ntohs(h.sin_port));
     ret_x(c, 0);
 }
 
@@ -594,6 +622,7 @@ static void send_common(Cpu *c, int with_addr) {
     int e = n < 0 ? host_error() : 0;
     dontwait(f, flags, 0);
     if (n < 0 && fanned) n = (long)len;
+    udp_log_io(f, (int)arg_x(c, 0), 1, n, e);
     if (n < 0) return ret_fail(c, e);
     ret_x(c, (uint64_t)n);
 }
@@ -631,6 +660,7 @@ static void recv_common(Cpu *c, int with_addr) {
     if (n < 0 && e == G_EMSGSIZE) n = (long)len, e = 0;   // POSIX truncates a datagram silently
 #endif
     dontwait(f, flags, 0);
+    udp_log_io(f, (int)arg_x(c, 0), 0, n, e);
     if (n < 0) return ret_fail(c, e);
     if (with_addr) to_guest_addr(&h, arg_p(c, 4), arg_p(c, 5));
     ret_x(c, (uint64_t)n);
