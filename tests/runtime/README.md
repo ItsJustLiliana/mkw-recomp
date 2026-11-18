@@ -22,3 +22,8 @@ C sources the tests here build with the compiler at hand and run:
 | `t_audio_update.c` | `test_audio_update.py` | Voice slots in RequestUpdate: `audren.c`'s update section (`request.inc`, cut out by the test) with the mixer and platform stubbed |
 | `t_adpcm.c` | `test_adpcm.py` | DSP-ADPCM voices: `audio_mixer.c`'s voice decoding (`voice.inc`, cut out by the test) against an exact decode of the same random buffers, five sample rates, seven pitches up to 3.9 (plus a high-rate case at 192 kHz and pitch 64), with and without contexts; prints output samples, wrong samples and decodes |
 | `t_power.c` | `test_power.py` | Xbox batteries on xone: `linux_power.c` against a fake sysfs tree; prints found, state, percent and coarse |
+
+| t_net_listen.c | test_net_listen.py | Debounced address changes and server listener restart |
+| t_srv.c | test_srv.py | Online server protocol, Gamesync, sessions and referee |
+
+Online protocol regressions in this folder: test_lan_peers.py, test_net_invite.py, test_net_listen.py, test_online_clock.py, test_online_friends.py, test_online_input.py, and test_srv.py.

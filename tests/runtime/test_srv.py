@@ -1,6 +1,6 @@
 """The online server (runtime/srv/). Without the network: the protobuf reader and writer against the encoding guide's
 examples and malformed input, the STUN reply against RFC 5769's sample addresses, the NAT check, the value tree, Gamesync
-writes and the race referee (tests/c/t_srv.c), built with the C compiler at hand, warnings as errors. With MKW_SRV_EXE
+writes and the race referee (tests/runtime/t_srv.c), built with the C compiler at hand, warnings as errors. With MKW_SRV_EXE
 set to a built mkw executable (beside its libraries): the real `--server` on 127.0.0.1, asked over UDP (STUN, NAT check)
 and over TLS + HTTP/2 the way the game asks: the certificate chains to the CA the server made and names the game's
 hosts, ALPN is h2, a unary call gets one empty message and grpc-status 0, a server stream one empty message and stays
@@ -23,7 +23,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SRV = ROOT / "runtime/srv"
 PORT = 18443  # not 8443: a game's own server may be running here
 
@@ -37,7 +37,7 @@ def t_srv(tmp_path_factory: pytest.TempPathFactory) -> Path:
     if not cc:
         pytest.skip("no C compiler")
     exe = tmp_path_factory.mktemp("srv") / "t_srv.exe"
-    srcs = [ROOT / "tests/c/t_srv.c", *(SRV / f"srv_{n}.c" for n in ("pb", "udp", "value", "docs", "referee"))]
+    srcs = [ROOT / "tests/runtime/t_srv.c", *(SRV / f"srv_{n}.c" for n in ("pb", "udp", "value", "docs", "referee"))]
     libm = [] if os.name == "nt" else ["-lm"]  # the referee's Elo
     subprocess.run([cc, "-std=gnu11", "-O1", "-Wall", "-Wextra", "-Werror", f"-I{SRV}", *map(str, srcs), "-o", str(exe),
                     *libm], check=True)  # fmt: skip

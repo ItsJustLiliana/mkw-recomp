@@ -76,7 +76,7 @@ by the F1 connection flow.
 
 ## Windows build and setup
 
-Install uv, CMake and MSYS2 UCRT64 Ninja as described in [tools/build](../tools/build/README.md#on-windows).
+Install uv, CMake and MSYS2 UCRT64 Ninja as described in [tools/build](../../tools/build/README.md#on-windows).
 From the repository root in PowerShell:
 
 ```powershell

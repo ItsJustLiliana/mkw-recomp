@@ -110,3 +110,5 @@ uv run tools/build/dist.py --target linux-aarch64 && uv run tools/build/release.
 On the device the setup works as on x86-64: the package's zig builds the game code, NVIDIA's AArch64 ("sbsa") `nvdisasm`
 and `ptxas` build the SM86 spec. Tested on an AYN Odin 2 (Snapdragon 8 Gen 2, Turnip, SteamOS ARM); rendering there
 also needs the Adreno workarounds in `runtime/gfx/vk`, which come separately.
+
+| llvm_clang.py | Shared LLVM/Clang compiler setup helpers for Windows and Linux builds | Internal build helper |
