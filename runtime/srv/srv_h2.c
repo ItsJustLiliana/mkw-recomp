@@ -355,6 +355,12 @@ static int on_stream_close(nghttp2_session *s, int32_t id, uint32_t error, void 
     SrvConn *conn = ud;
     Call *c = nghttp2_session_get_stream_user_data(s, id);
     if (!c) return 0;
+    // Distinguish gRPC success trailers, peer RST_STREAM and unannounced stream shutdown.
+    // This is especially important for races where both Gamesync listeners disappear together.
+    if (strstr(c->path, "/Gamesync/KeepUserSession"))
+        srv_log("%s Gamesync stream close h2_error=%u server_done=%d server_ending=%d "
+                "client_half_closed=%d grpc_status=%d",
+                conn->peer, error, c->done, c->ending, c->half_closed, c->status);
     if (!c->done && c->path[0]) srv_log("%s %s closed by the player (%u)", conn->peer, c->path, error);
     for (Call **p = &conn->calls; *p; p = &(*p)->next)
         if (*p == c) {
