@@ -163,7 +163,9 @@ static void ov_show_keyboard(Cpu *c) {
     uint16_t u[KB_LIMIT * 2 + 1];
     size_t n = 0;
     int confirmed;
-    const char *forced = cfg_get("MKW_SWKBD_ANSWER");
+    // Scripted answers are an explicit process-level test hook. Old room codes saved in mkw.ini must not
+    // bypass the interactive keyboard every time the player joins a different room.
+    const char *forced = getenv("MKW_SWKBD_ANSWER");
     int away = kern_core_away();
     plat_mutex_lock(&one);
     request_from(arg, &req);

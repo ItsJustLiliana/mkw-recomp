@@ -17,3 +17,5 @@ int srv_auth_token(char *out, size_t cap, const char *uid, const char *use);
 // SHA-256 of a player's secret, lowercase hex (out: 65 bytes).
 void srv_secret_hash(const char *secret, char out[65]);
 int srv_secret_equal(const char *a, const char *b);   // constant time
+// Coturn REST credentials: an expiry-bound username and base64(HMAC-SHA1(secret, username)).
+int srv_turn_credentials(const char *secret, const char *uid, int64_t expiry, char user[96], char password[32]);

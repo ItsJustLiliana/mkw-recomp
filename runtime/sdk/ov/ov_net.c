@@ -91,7 +91,7 @@ static void ov_request_result(Cpu *c) {
 }
 // Result GetCurrentIpConfigInfo(in_addr *ip, in_addr *mask, in_addr *gateway, in_addr *dns1, in_addr *dns2). LAN
 // lobby: the LAN address (ov_lan_address). Online: the address of the route to the server, the one the other players
-// reach (through Tailscale, its 100.x address).
+// reach (through Tailscale, its 100.x address and /10 overlay).
 static void ov_ip_config(Cpu *c) {
     uint8_t ip[4] = {0}, mask[4] = {255, 255, 255, 0}, gw[4];
     if (lan_up()) {
@@ -99,6 +99,12 @@ static void ov_ip_config(Cpu *c) {
     } else if (net_enabled()) {
         uint32_t a = net_local_ip();
         memcpy(ip, &a, 4);
+        if (ip[0] == 100 && ip[1] >= 64 && ip[1] <= 127) {
+            mask[0] = 255;
+            mask[1] = 192;
+            mask[2] = 0;
+            mask[3] = 0;
+        }
     }
     if (!ip[0]) return ret_x(c, NIFM_R_NO_NETWORK);
     for (int i = 0; i < 4; i++) gw[i] = ip[i] & mask[i];
@@ -138,6 +144,7 @@ HOST_OVERRIDE("_ZN2nn4nifm22GetCurrentProxySettingEPNS0_12ProxySettingE", ov_pro
 #define FRIENDS_R_UNAVAILABLE (121u | (1u << 9))   // module 121; description is a hypothesis
 static int online(void);
 static void ov_friend_list_available(Cpu *c) {
+    if (online()) net_clients_start();
     uint8_t *out = arg_p(c, 0);
     if (out) *out = (uint8_t)online();
     ret_x(c, 0);
@@ -145,6 +152,27 @@ static void ov_friend_list_available(Cpu *c) {
 static void ov_friend_list(Cpu *c) {
     int32_t *count = arg_p(c, 0);
     if (count) *count = 0;
+    uint8_t *out = arg_p(c, 1);
+    int offset = (int)arg_x(c, 3), capacity = (int)arg_x(c, 4);
+    if (online() && out && offset >= 0 && capacity > 0) {
+        NetParty party;
+        net_party_snapshot(&party);  // no network or disk work on the game thread
+        int n = party.nfriends - offset;
+        if (n < 0) n = 0;
+        if (n > capacity) n = capacity;
+        // SDK 1.8.0 Friend getters read account id at +0x10, nickname at +0x18 and valid at +0x128.
+        // The constructor's object size is 0x200, also used by the 1.0.0 SDK.
+        for (int i = 0; i < n; i++) {
+            const NetFriend *f = &party.friends[offset + i];
+            uint8_t *entry = out + (size_t)i * 0x200;
+            memset(entry, 0, 0x200);
+            uint64_t code = strtoull(f->code, NULL, 10);
+            memcpy(entry + 0x10, &code, sizeof code);
+            snprintf((char *)entry + 0x18, 33, "%.32s", *f->name ? f->name : f->code);
+            entry[0x128] = 1;
+        }
+        if (count) *count = n;
+    }
     ret_x(c, 0);
 }
 static void ov_friends_unavailable(Cpu *c) {
@@ -170,13 +198,17 @@ HOST_OVERRIDE("_ZN2nn7friends29GetPlayHistoryRegistrationKeyEPNS0_26PlayHistoryR
 HOST_OVERRIDE("_ZN2nn7friends14AddPlayHistoryERKNS_7account3UidERKNS0_26PlayHistoryRegistrationKeyERKNS0_15InAppScreenNameESA_",
               ov_ok);
 
-// ==== nn::ldn (local wireless play): disabled, as on a console in airplane mode. MKW's LAN play uses sockets, not
-// ldn. Initialize fails, so the game does not use the rest; they fail too in case it does.
+// ==== nn::ldn (local wireless play): MKW's socket-backed online path initializes this service too, but does not use
+// its radio operations. Keep those unavailable; only let initialization succeed for online play.
 #define LDN_R_DISABLED (203u | (22u << 9))   // module 203; description is a hypothesis
 static void ov_ldn_disabled(Cpu *c) { net_refused(c, "ldn", LDN_R_DISABLED); }
+static void ov_ldn_initialize(Cpu *c) {
+    if (net_enabled()) return ov_ok(c);
+    ov_ldn_disabled(c);
+}
 static void ov_ldn_state(Cpu *c) { ret_x(c, 0); }
 
-HOST_OVERRIDE("_ZN2nn3ldn10InitializeEv", ov_ldn_disabled);
+HOST_OVERRIDE("_ZN2nn3ldn10InitializeEv", ov_ldn_initialize);
 HOST_OVERRIDE("_ZN2nn3ldn8FinalizeEv", ov_nothing);
 HOST_OVERRIDE("_ZN2nn3ldn8GetStateEv", ov_ldn_state);
 HOST_OVERRIDE("_ZN2nn3ldn19GetDisconnectReasonEv", ov_ldn_state);

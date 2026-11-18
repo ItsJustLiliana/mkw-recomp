@@ -32,11 +32,20 @@ def test_f1_typing_survives_polling(tmp_path: Path) -> None:
             pytest.skip("SDL3 development files missing")
         sdl = result.stdout.split()
     menu = (ROOT / "runtime/ui/menu/menu.cpp").read_text()
-    events = menu[menu.index("enum { EV_KEY,"):menu.index("// ---- gamepad navigation:")]
+    events = menu[menu.index("enum { EV_KEY,"):menu.index("static int text_filter(")]
+    keyboard_ui = menu[menu.index("static int text_filter("):menu.index("// ---- gamepad navigation:")]
+    keyboard = (ROOT / "runtime/sdk/swkbd/swkbd.c").read_text()
+    conversions = keyboard[keyboard.index("size_t swkbd_utf16_to_utf8("):keyboard.index("// Drop disallowed")]
     code = r'''
 #include <assert.h>
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+#include <chrono>
 #include <SDL3/SDL.h>
 #include "imgui.h"
 #include "imgui_internal.h"
@@ -46,13 +55,31 @@ extern "C" {
 #include "ui/menu/menu.h"
 #include "net_online.h"
 #include "ui_text.h"
+#include "swkbd.h"
 static int opened = 1;
-int menu_is_open(void) { return opened; }
-void menu_toggle(void) { opened = !opened; }
+int menu_is_open(void) { return opened || text_entry_active(); }
+void menu_toggle(void) {
+    if (text_entry_active()) { SwkbdRequest r; text_entry_finish(text_entry_snapshot(&r), NULL); }
+    else opened = !opened;
+}
 void menu_perf_cycle(void) {}
 double gfx_window_sdl_density(void) { return 1; }
-void plat_mutex_lock(PlatMutex *) {}
-void plat_mutex_unlock(PlatMutex *) {}
+static std::mutex init_lock;
+static std::mutex &mutex_of(PlatMutex *m) {
+    std::lock_guard<std::mutex> lock(init_lock);
+    if (!m->p) m->p = new std::mutex;
+    return *(std::mutex *)m->p;
+}
+void plat_mutex_lock(PlatMutex *m) { mutex_of(m).lock(); }
+void plat_mutex_unlock(PlatMutex *m) { mutex_of(m).unlock(); }
+static std::condition_variable cv;
+void plat_cond_wait(PlatCond *, PlatMutex *m) {
+    std::unique_lock<std::mutex> lock(mutex_of(m), std::adopt_lock);
+    cv.wait(lock);
+    lock.release();
+}
+void plat_cond_signal(PlatCond *) { cv.notify_one(); }
+int gfx_text_entry_start(unsigned) { return 1; } // headless test supplies the present frames itself
 const char *cfg_get(const char *) { return ""; }
 void cfg_set(const char *, const char *) {}
 int cfg_save(void) { return 1; }
@@ -76,7 +103,11 @@ const char *menu_text(UiTextId id) {
     return labels[id];
 }
 }
-''' + events + r'''
+extern "C" {
+''' + conversions + r'''
+#include "sdk/swkbd/swkbd_sdl.c"
+}
+''' + events + keyboard_ui + r'''
 #include "ui/menu/online_tab.cpp"
 static void frame() {
     drain_events(ImGui::GetIO());
@@ -86,6 +117,7 @@ static void frame() {
     ImGui::Begin("test");
     online_tab(1, 30);
     ImGui::End();
+    if (text_entry_active()) layout_text_entry(1200, 700, 1);
     ImGui::Render();
 }
 static void text(const char *value) {
@@ -170,7 +202,41 @@ int main() {
     submit(JOIN, "10.0.0.2:8443");
     assert(pending.action == JOIN && !strcmp(pending.endpoint, "10.0.0.2:8443"));
     assert(active.load() == REFRESH); // no conflicting worker or dropped click
+    // The game's room-code request waits for real input even with F1 closed; no ini answer is needed.
     opened = 0;
+    SwkbdRequest request = {};
+    request.numeric = 1;
+    request.min_len = request.max_len = 6;
+    uint16_t answer[KB_LIMIT + 1] = {};
+    size_t answer_len = 0;
+    std::atomic<int> result{-1};
+    std::thread caller([&] { result = text_entry_run(&request, answer, KB_LIMIT, &answer_len); });
+    for (int i = 0; i < 1000 && !text_entry_active(); i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(text_entry_active() && result == -1);
+    menu_sdl_idle(window);
+    assert(SDL_TextInputActive(window));
+    frame(); frame();
+    text("123456");
+    frame();
+    assert(result == -1);
+    key.type = SDL_EVENT_KEY_DOWN;
+    key.key.scancode = SDL_SCANCODE_RETURN;
+    menu_sdl_event(&key);
+    frame();
+    caller.join();
+    assert(result == 1 && answer_len == 6 && answer[0] == '1' && answer[5] == '6');
+    result = -1;
+    std::thread cancelled([&] { result = text_entry_run(&request, answer, KB_LIMIT, &answer_len); });
+    for (int i = 0; i < 1000 && !text_entry_active(); i++) std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    assert(text_entry_active());
+    SwkbdRequest snapshot;
+    unsigned id = text_entry_snapshot(&snapshot);
+    text_entry_finish(id - 1, "999999");  // a stale dialog cannot answer a newer request
+    assert(text_entry_active());
+    key.key.scancode = SDL_SCANCODE_F1;
+    menu_sdl_event(&key);
+    cancelled.join();
+    assert(result == 0 && answer_len == 0);
     menu_sdl_idle(window);
     assert(!SDL_TextInputActive(window));
     text("ignored");

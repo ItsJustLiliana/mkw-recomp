@@ -5,6 +5,7 @@ through `job.sh`.
 
 | Script | What it does | Usage |
 |---|---|---|
+| `host_server.py` | Configures isolated Linux systemd user services for the standalone lobby and coturn; keeps keys in owner-only files, bounds resources, and leaves other services alone | `python tools/run/host_server.py --root DIR --lan-ip IP --public-ip IP [--start]` |
 | `job.sh` | Runs a heavy command (a game run, a replay) through the host's job runner when there is one (`JOB_RUNNER`, or `job-runner` on PATH: memory cap and one at a time), else a systemd user unit capped at `JOB_MEM` without swap, else directly | `tools/run/job.sh run\|start NAME CMD...` |
 | `watch.sh` | Follows a run's log and prints FATAL and guard stops, plus the lines matching a pattern if given (each one wakes the agent: only what changes the plan); exits when the run ends (the command of a Monitor) | `tools/run/watch.sh NAME [PATTERN]` |
 | `live.sh` | A run that stays alive to be inspected through its control FIFO (`MKW_CTL`, `runtime/core/base/ctl.c`), with the race runs' settings | `tools/run/live.sh NAME [SECONDS]` |

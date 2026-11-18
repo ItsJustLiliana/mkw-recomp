@@ -215,7 +215,7 @@ static SrvSession *session_new(const char *tenant, const char *config, int room,
     s->attrs = *attrs;
     *attrs = (SrvMap){0};
     s->created = (int64_t)time(NULL);
-    s->changed_ms = srv_ms();
+    s->created_ms = s->changed_ms = srv_ms();
     docs_init(&s->docs, s->created);
     sessions[nsessions++] = s;
     uint8_t rs[16];
@@ -337,6 +337,16 @@ static void create_room(SrvCall *c, const uint8_t *msg, size_t len) {
     if (pb_find(ct.data, ct.len, 6, &tmpl) == 1 && tmpl.wt == PB_LEN && pb_find(tmpl.data, tmpl.len, 11, &f) == 1 &&
         f.wt == PB_LEN)
         map_decode(&attrs, f.data, f.len);
+    // The creator knows this is a room; a joiner reads the session's integer rule (1.8.0 main+0x20ff2a0).
+    // Missing reads as 0 (public race), so the joiner takes a different start path and the host's SyncState
+    // times out after 25 s. Rule 3 identifies a private room. Protocol finding: MKWMP SYNCSTATE-RE.md section 9,
+    // credited as ideas only in docs/research.md; no external implementation is used here.
+    if (!map_get(&attrs, "rule") && !map_set(&attrs, "rule", val_int(3))) {
+        map_free(&attrs);
+        map_free(&host_attrs);
+        srv_call_end(c, ST_RESOURCE_EXHAUSTED, "could not set room rule");
+        return;
+    }
     char tenant[64], config[160], version[64];
     tenant_of(c, tenant);
     snprintf(config, sizeof config, "%.*s", (int)cfg.len, (const char *)cfg.data);
@@ -390,8 +400,10 @@ static void track_room(SrvCall *c, const uint8_t *msg, size_t len) {
 
 static void track_room_end(SrvCall *c) { track_room(c, NULL, 0); }
 
-// JoinGameSession {1: game session name, 3: TicketMember}: a room takes the player in (same version and build, room
-// not full); a matchmade session's members do not change. Reply {1: MemberEntry..., 2: GameSession}.
+static int session_accepting(const SrvSession *s);
+
+// A friend may join a private room or an accepting public lobby. Closed/full public races refuse new players.
+// Reply {1: MemberEntry..., 2: GameSession}.
 static void join(SrvCall *c, const uint8_t *msg, size_t len) {
     const char *uid = srv_call_uid(c);
     SrvSession *s = session_of(c, msg, len);
@@ -401,9 +413,13 @@ static void join(SrvCall *c, const uint8_t *msg, size_t len) {
         return;
     }
     SrvMember *m = srv_member(s, uid);
-    if (s->room && *uid && m) {
+    if (*uid && m) {
         m->seq = ++member_seq;   // joining a room one is in already is accepted
-    } else if (s->room && *uid) {
+    } else if (*uid) {
+        if (!s->room && !session_accepting(s)) {
+            srv_call_end(c, ST_FAILED_PRECONDITION, "lobby is not accepting players");
+            return;
+        }
         PbField tm, f;
         SrvMap attrs = {0};
         if (pb_find(msg, len, 3, &tm) == 1 && tm.wt == PB_LEN && pb_find(tm.data, tm.len, 2, &f) == 1 &&
@@ -425,7 +441,7 @@ static void join(SrvCall *c, const uint8_t *msg, size_t len) {
             return;
         }
         srv_player_set_version(uid, v);
-        if (!member_add(s, uid, &attrs, ++s->next_ussid)) {
+        if (!member_add(s, uid, &attrs, s->room ? ++s->next_ussid : s->nmembers + 1)) {
             srv_call_end(c, ST_RESOURCE_EXHAUSTED, "room full");
             return;
         }
@@ -443,6 +459,27 @@ static void get_session(SrvCall *c, const uint8_t *msg, size_t len) {
     PbOut o = {0};
     if (s) put_session(&o, 0, s);
     reply(c, &o);
+}
+
+// Friend cards fetch their advertised session ids together: request field 2 names, reply field 1 sessions.
+// Unknown ids and sessions of another tenant are omitted. No member credentials are returned.
+static void batch_sessions(SrvCall *c, const uint8_t *msg, size_t len) {
+    char tenant[64];
+    tenant_of(c, tenant);
+    PbIn in = pb_in(msg, len);
+    PbField field;
+    PbOut out = {0};
+    int n = 0;
+    while (pb_next(&in, &field) > 0 && n < 100) {
+        if (field.num != 2 || field.wt != PB_LEN || field.len >= 160 || memchr(field.data, 0, field.len)) continue;
+        char name[160];
+        memcpy(name, field.data, field.len);
+        name[field.len] = 0;
+        SrvSession *s = srv_session_find(last_seg(name));
+        if (s && !strcmp(s->tenant, tenant) && !s->closed) put_session(&out, 1, s);
+        n++;
+    }
+    reply(c, &out);
 }
 
 // ---- room IDs: 6 random digits per session, unique among live sessions
@@ -502,6 +539,13 @@ static void get_alias(SrvCall *c, const uint8_t *msg, size_t len) {
 static void ice(SrvCall *c, const uint8_t *msg, size_t len) {
     (void)msg, (void)len;
     const char *uid = srv_call_uid(c);
+    const char *relay = srv_setting("turn_host", "");
+    char turn_user[96], turn_password[32];
+    if (*relay && !srv_turn_credentials(srv_setting("turn_secret", ""), uid,
+                                      (int64_t)time(NULL) + ICE_S, turn_user, turn_password)) {
+        srv_call_end(c, ST_FAILED_PRECONDITION, "relay credentials unavailable");
+        return;
+    }
     char tenant[64], name[160], cred[TOKEN_MAX];
     tenant_of(c, tenant);
     if (!srv_auth_token(cred, sizeof cred, *uid ? uid : "u-0000000000000000", "t")) cred[0] = 0;
@@ -514,11 +558,11 @@ static void ice(SrvCall *c, const uint8_t *msg, size_t len) {
     pb_varint(&o, 3, 1);   // UDP
     pb_end(&o, m);
     m = pb_begin(&o, 3);
-    pb_str(&o, 1, "relay.npln.nintendo.net");
-    pb_varint(&o, 2, 3479);
+    pb_str(&o, 1, *relay ? relay : "relay.npln.nintendo.net");
+    pb_varint(&o, 2, (uint64_t)srv_setting_int("turn_port", 3479, 1, 65535));
     pb_varint(&o, 3, 1);
-    pb_str(&o, 4, uid);
-    pb_str(&o, 5, cred);
+    pb_str(&o, 4, *relay ? turn_user : uid);
+    pb_str(&o, 5, *relay ? turn_password : cred);
     pb_end(&o, m);
     m = pb_begin(&o, 4);   // Duration
     pb_int64(&o, 1, ICE_S);
@@ -721,6 +765,21 @@ static void placed(Ticket *t, const SrvSession *s, uint64_t now) {
 
 static int truthy(const SrvVal *v) { return v && (v->kind == V_BOOL || v->kind == V_INT) && v->u.i; }
 
+static int session_accepting(const SrvSession *s) {
+    const SrvDoc *m = docs_find(&s->docs, "__gs/m");
+    const SrvVal *cp = m ? map_get(&m->fields, "cp") : NULL;
+    int64_t limit = s->max_players, bf = m ? map_int(&m->fields, "bfmax", 0) : 0;
+    if (bf > 0 && bf < limit) limit = bf;
+    if (!m || s->closed || s->nmembers >= limit || s->nmembers >= MEMBERS_MAX ||
+        (cp && (cp->kind == V_BOOL || cp->kind == V_INT) && !cp->u.i)) return 0;
+    int there = 0;
+    for (int k = 0; k < s->docs.n && !there; k++)
+        there = !strncmp(s->docs.doc[k].path, "__pgn/", 6) && strstr(s->docs.doc[k].path, "/__pus/");
+    // Fill a new lobby while the first clients load; afterwards respect the game's backfill flag.
+    int forming = !there && srv_ms() - s->created_ms < 30000;
+    return forming || (there && truthy(map_get(&m->fields, "ebf")));
+}
+
 // A lobby in progress the ticket may join (the protocol description, "Backfill"): matchmade, same queue, the host
 // allows it (__gs/m: ebf true, cp not false), somebody really there (a participation document: a stale ebf stays when
 // everyone leaves), room under min(maximum, bfmax), builds compatible.
@@ -730,16 +789,7 @@ static SrvSession *backfill_target(const Ticket *t) {
         if (s->room || s->closed || !s->nmembers || strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
             strcmp(s->batching, t->batching) || srv_member(s, t->uid))
             continue;
-        const SrvDoc *m = docs_find(&s->docs, "__gs/m");
-        const SrvVal *cp = m ? map_get(&m->fields, "cp") : NULL;
-        if (!m || !truthy(map_get(&m->fields, "ebf")) || (cp && (cp->kind == V_BOOL || cp->kind == V_INT) && !cp->u.i))
-            continue;
-        int64_t limit = s->max_players, bf = map_int(&m->fields, "bfmax", 0);
-        if (bf > 0 && bf < limit) limit = bf;
-        int there = 0;
-        for (int k = 0; k < s->docs.n && !there; k++)
-            there = !strncmp(s->docs.doc[k].path, "__pgn/", 6) && strstr(s->docs.doc[k].path, "/__pus/");
-        if (s->nmembers >= limit || s->nmembers >= MEMBERS_MAX || !there) continue;
+        if (!session_accepting(s)) continue;
         int ok = 1;
         for (int k = 0; ok && *t->build && k < s->nmembers; k++)
             ok = !*s->members[k].build || !strcmp(s->members[k].build, t->build);
@@ -771,6 +821,10 @@ static void match_queue(Ticket **q, int n, uint64_t now) {
     SrvMap attrs;
     if (!map_copy(&attrs, &pick[0]->attrs)) return;
     map_del(&attrs, "npln_user_id");
+    if (!map_get(&attrs, "rule") && !map_set(&attrs, "rule", val_int(ko ? 6 : !strcmp(config, "Battle24") ? 5 : 0))) {
+        map_free(&attrs);
+        return;
+    }
     SrvSession *s = session_new(pick[0]->tenant, config, 0, size, &attrs);
     if (!s) return;
     snprintf(s->batching, sizeof s->batching, "%s", pick[0]->batching);
@@ -865,6 +919,7 @@ const SrvMethod SRV_TRACK_ROOM = {NULL, "TrackGameSessionCreationTicket", SRV_SS
                                   track_room, track_room_end, NULL, NULL};
 const SrvMethod SRV_JOIN = {NULL, "JoinGameSession", SRV_UNARY, 0, join, NULL, NULL, NULL};
 const SrvMethod SRV_GET_SESSION = {NULL, "GetGameSession", SRV_UNARY, 0, get_session, NULL, NULL, NULL};
+const SrvMethod SRV_BATCH_SESSIONS = {NULL, "BatchGetGameSessions", SRV_UNARY, 0, batch_sessions, NULL, NULL, NULL};
 const SrvMethod SRV_CREATE_ALIAS = {NULL, "CreateGameSessionShortAlias", SRV_UNARY, 0, create_alias, NULL, NULL, NULL};
 const SrvMethod SRV_GET_ALIAS = {NULL, "GetGameSessionShortAlias", SRV_UNARY, 0, get_alias, NULL, NULL, NULL};
 const SrvMethod SRV_ICE = {"GameSessionService", "AllocateIceServerSet", SRV_UNARY, 0, ice, NULL, NULL, NULL};

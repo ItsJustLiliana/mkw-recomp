@@ -19,6 +19,7 @@ static const SrvMethod *const SERVICES[] = {
     &SRV_JOIN,          &SRV_GET_SESSION,    &SRV_CREATE_ALIAS, &SRV_GET_ALIAS,    &SRV_ICE,         &SRV_CREATE_TICKET,
     &SRV_TRACK_TICKET,  &SRV_CANCEL_TICKET,  &SRV_GS_ISSUE,     &SRV_GS_REFRESH,   &SRV_GS_GET,      &SRV_GS_WRITE,
     &SRV_GS_LISTEN,
+    &SRV_BATCH_SESSIONS,
 };
 
 static int is(const SrvMethod *m, const char *service, const char *method) {

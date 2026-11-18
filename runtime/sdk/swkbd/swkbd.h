@@ -18,6 +18,12 @@ typedef struct {
 // game's input blocked). Returns 1 with the text in out (n units), 0 when cancelled.
 int text_entry_run(const SwkbdRequest *req, uint16_t *out, size_t cap, size_t *n);
 
+// Modal request shared with the menu overlay. Snapshot returns its generation, or 0 when idle.
+int text_entry_active(void);
+unsigned text_entry_snapshot(SwkbdRequest *req);
+void text_entry_finish(unsigned generation, const char *utf8);   // NULL cancels; stale replies are ignored
+int gfx_text_entry_start(unsigned generation);   // independent redraws if the calling game thread stops presenting
+
 // UTF-16 (n units) -> NUL-terminated UTF-8 in cap bytes, cut at a character boundary; the bytes written.
 size_t swkbd_utf16_to_utf8(const uint16_t *s, size_t n, char *out, size_t cap);
 // UTF-8 -> UTF-16, at most cap units (a character that does not fit whole is dropped); bad bytes become U+FFFD.

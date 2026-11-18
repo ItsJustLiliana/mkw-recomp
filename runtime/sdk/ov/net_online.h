@@ -70,7 +70,8 @@ void net_friends_get(const char *server, NetFriendLists *out);
 typedef struct {
     char server[160], room[32], error[200];
     NetFriend clients[NET_MAX_CODES], members[NET_MAX_CODES];
-    int nclients, nmembers, reached;
+    NetFriend friends[NET_MAX_CODES];
+    int nclients, nmembers, nfriends, reached;
 } NetParty;
 // A 5-second background lease, independent of F1 drawing. Includes only live runtime clients and actual game
 // room members, never inferred from the selected server. Snapshot reads do no disk or network work.

@@ -26,6 +26,7 @@
 #include "host.h"
 #include "nvn_api.h"
 #include "ui/menu/menu.h"
+#include "swkbd.h"
 #include "vk.h"
 #include "platform/platform.h"
 
@@ -52,6 +53,7 @@ static volatile int32_t g_focused = 1;
 static volatile int32_t g_focus_msgs;
 static PlatRMutex g_start_lock;       // gfx_window_start / vsync start
 static int g_started;
+static uint64_t last_game_present_ns;
 
 void gfx_window_mark_dirty(void) { plat_xchg32(&g_dirty, 1); }
 
@@ -604,6 +606,7 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     gfx_window_start();
     VkCtx *c = vk_ctx();
     plat_rmutex_lock(&g_pl);
+    if (src) __atomic_store_n(&last_game_present_ns, plat_now_ns(), __ATOMIC_RELAXED);
     if (defer != 2 || g_flip_n >= g_ahead) flip_locked();   // (no more acquired images than the swapchain spares)
     if (gfx_hdr_cfg_changed()) plat_xchg32(&g_dirty, 1);   // MKW_HDR switched in the menu: HDR10 or SDR from now on
     if (!g_sc || plat_cas32(&g_dirty, 0, 0)) {
@@ -655,7 +658,7 @@ static void present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w
     MenuTarget mt = {c->instance, c->phys, c->device, c->gfx_family, c->gfx_queue,
                      g_sc_hdr ? VK_FORMAT_R8G8B8A8_UNORM : g_sc_fmt, g_sc_ext.width,
                      g_sc_ext.height, cw, ch, g_scaler};
-    int overlay = src && g_sc_view[idx] &&
+    int overlay = (src || text_entry_active()) && g_sc_view[idx] &&
                   menu_overlay_frame(__atomic_load_n(&gfx_counters.frames, __ATOMIC_RELAXED), &mt, &menu_shot);
     if (!menu_shot && __atomic_exchange_n(&g_screen_on, 0, __ATOMIC_ACQ_REL)) menu_shot = g_screen_path;
     int cap = src && (g_capture || menu_shot) && ensure_capture_buffer();
@@ -799,6 +802,24 @@ void gfx_window_early(void) {
     const char *gpu = cfg_get("MKW_GPU");
     if (gpu && !strcmp(gpu, "null")) return;
     present_image(VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, VK_FORMAT_UNDEFINED, 0, 0, NULL, 0);
+}
+
+// ShowKeyboard may block the thread that normally submits frames. Keep the dialog responsive on its own worker;
+// normal game presents draw it themselves, so the worker only fills gaps and never reads a retired game image.
+static void text_entry_present(void *arg) {
+    unsigned id = (unsigned)(uintptr_t)arg;
+    SwkbdRequest request;
+    while (text_entry_snapshot(&request) == id) {
+        if (plat_now_ns() - __atomic_load_n(&last_game_present_ns, __ATOMIC_RELAXED) > 50000000ull)
+            present_image(VK_NULL_HANDLE, VK_IMAGE_LAYOUT_UNDEFINED, VK_FORMAT_UNDEFINED, 0, 0, NULL, 0);
+        plat_sleep_ns(16666667);
+    }
+}
+
+int gfx_text_entry_start(unsigned id) {
+    const char *gpu = cfg_get("MKW_GPU");
+    if (gpu && !strcmp(gpu, "null")) return 0;
+    return plat_thread_spawn(text_entry_present, (void *)(uintptr_t)id, "game text entry", 0);
 }
 
 void vk_present_image(VkImage src, VkImageLayout layout, VkFormat fmt, int w, int h, const int crop[4]) {

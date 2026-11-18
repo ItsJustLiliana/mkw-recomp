@@ -23,7 +23,6 @@ void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 }
 
 enum { JOB_REFRESH, JOB_ACTION, JOB_TEST };
-enum { MODE_OFF, MODE_HOST, MODE_JOIN };
 
 typedef struct {
     int job;
@@ -64,13 +63,23 @@ static int SDLCALL worker(void *arg) {
     char err[300] = "", msg[400] = "";
     int ok = 1;
     if (t->job == JOB_TEST) {
-        // Connect: the server may be a new one at an old address (a friend's PC whose server made new keys): its
-        // certificate is fetched again, now that the player asks for this address
-        net_forget_ca(t->server);
         const char *e = net_probe(t->server, err, sizeof err);
         ok = !*e;
+        if (ok) {
+            size_t size;
+            uint8_t *ca = net_server_ca(t->server, &size);
+            if (!ca) ok = !*net_fetch_ca(t->server, err, sizeof err);
+            free(ca);
+        }
+        if (ok) {
+            net_host_stop();
+            cfg_set("MKW_ONLINE_SERVER", t->server);
+            cfg_set("MKW_ONLINE", "1");
+            cfg_set("MKW_SERVER_HOST", "0");
+            cfg_save();
+        }
         if (ok) snprintf(msg, sizeof msg, "%s", menu_text(UI_ONLINE_REACHED));
-        else snprintf(msg, sizeof msg, menu_text(UI_ONLINE_FAILED), e);
+        else snprintf(msg, sizeof msg, menu_text(UI_ONLINE_FAILED), *err ? err : e);
     } else if (t->job == JOB_ACTION) {
         const char *e = net_friends_do(t->server, t->op, t->code, err, sizeof err);
         ok = !*e;
@@ -136,15 +145,6 @@ static void load_code(void) {
     if (O.server[0] && net_profile_load(O.server, &p, 1)) net_format_code(p.code, O.code);
 }
 
-static void save_server(void) {
-    cfg_set("MKW_ONLINE_SERVER", O.server);
-    cfg_save();
-    load_code();
-    SDL_LockMutex(O.lock);
-    O.have_lists = 0;
-    SDL_UnlockMutex(O.lock);
-}
-
 void online_opened(void) {
     if (!O.lock) O.lock = SDL_CreateMutex();
     if (!O.started) {
@@ -205,26 +205,6 @@ static NetHostState host_state(char *detail, size_t cap) {
     }
     snprintf(detail, cap, "%s", last);
     return st;
-}
-
-static int mode_now(void) { return !net_enabled() ? MODE_OFF : net_host_enabled() ? MODE_HOST : MODE_JOIN; }
-
-static void set_mode(int mode) {
-    int was = mode_now();
-    cfg_set("MKW_ONLINE", mode == MODE_OFF ? "0" : "1");
-    cfg_set("MKW_SERVER_HOST", mode == MODE_HOST ? "1" : "0");
-    cfg_save();
-    say("", -1);
-    if (mode == MODE_HOST) {
-        host_apply(false);
-    } else {
-        net_host_stop();
-        if (mode == MODE_JOIN && was == MODE_HOST) {   // hosting set this PC's own address: the friend's goes there
-            O.server[0] = 0;
-            save_server();
-        }
-    }
-    if (mode != MODE_OFF && O.server[0]) start(JOB_REFRESH);
 }
 
 // ---- who the player is: the name the others see, the friend code to give
@@ -327,7 +307,6 @@ static void join_section(float s) {
     if (ImGui::Button(menu_text(UI_ONLINE_TEST))) go = true;
     ImGui::EndDisabled();
     if (go && O.server[0] && !O.busy) {
-        save_server();
         start(JOB_TEST);
     }
 }
@@ -437,29 +416,31 @@ static void lan_section(float s) {
 
 void online_page(float scale, float bottom) {
     if (!O.lock) online_opened();
+    static uint64_t refreshed;
+    if (!O.busy && SDL_GetTicks() - refreshed > 5000) {
+        refreshed = SDL_GetTicks();
+        load_code();
+        if (net_enabled() && O.server[0]) start(JOB_REFRESH);
+    }
     float s = scale;
     ImGui::BeginChild("##online_body", ImVec2(0, -bottom), ImGuiChildFlags_None);
 
     me_section();
-
-    ImGui::SeparatorText(menu_text(UI_ONLINE_ENABLE));   // how the player plays online
-    static const UiTextId kMode[] = {UI_ONLINE_MODE_OFF, UI_ONLINE_MODE_HOST, UI_ONLINE_MODE_JOIN};
-    int mode = mode_now();
-    for (int i = 0; i < 3; i++)
-        if (ImGui::RadioButton(menu_text(kMode[i]), mode == i) && mode != i) set_mode(mode = i);
+    if (O.code[0]) friends_section(s);
     ImGui::Spacing();
-    if (mode == MODE_OFF) wrapped(menu_text(UI_ONLINE_ENABLE_DESC), kGrey);
-    else if (mode == MODE_HOST) host_section(s);
-    else join_section(s);
+    ImGui::SeparatorText(menu_text(UI_ONLINE_SERVER));
+    join_section(s);
     SDL_LockMutex(O.lock);
-    if (mode != MODE_OFF && O.status[0])
+    if (O.status[0])
         wrapped(O.status, O.status_ok == 1 ? kGreen : O.status_ok == 0 ? kRed : kGrey);
     SDL_UnlockMutex(O.lock);
 
-    if (mode != MODE_OFF && O.code[0]) friends_section(s);
-
     ImGui::Spacing();
-    lan_section(s);
+    // Local hosting remains a fallback, separate from the shared-server player flow.
+    if (ImGui::CollapsingHeader(menu_text(UI_ONLINE_HOST_START))) {
+        host_section(s);
+        lan_section(s);
+    }
     if (ImGui::CollapsingHeader(menu_text(UI_ONLINE_HOWTO))) {
         ImGui::TextWrapped("%s", menu_text(UI_ONLINE_HOWTO_TEXT));
         ImGui::Spacing();

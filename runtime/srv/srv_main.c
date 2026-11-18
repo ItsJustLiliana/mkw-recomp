@@ -49,6 +49,10 @@ static uint8_t self_ip[4];
 static Conn conns[MAX_CONNS];
 static int nconns;
 static FILE *log_file;
+#ifdef __linux__
+static volatile sig_atomic_t stop_requested;
+static void stop_server(int signal_number) { (void)signal_number; stop_requested = 1; }
+#endif
 
 void srv_log(const char *fmt, ...) {
     char line[1024];
@@ -173,7 +177,18 @@ static void on_udp(const Listener *l) {
     if (n <= 0) return;
     SrvPeer p = peer_of(&from);
     size_t r = 0;
-    if (l->kind == K_STUN) r = stun_reply(in, (size_t)n, &p, out, sizeof out);
+    if (l->kind == K_STUN) {
+        r = stun_reply(in, (size_t)n, &p, out, sizeof out);
+        // Lobby HTTPS can work while Pia waits for a relay allocation that this server cannot answer.
+        // Report the first Allocate request only: retries must not flood a shared server's log.
+        static int relay_warned;
+        if (!r && !relay_warned && n >= 20 && in[0] == 0 && in[1] == 3 &&
+            (unsigned)(in[2] << 8 | in[3]) == (unsigned)n - 20 && !(in[3] & 3) &&
+            in[4] == 0x21 && in[5] == 0x12 && in[6] == 0xa4 && in[7] == 0x42) {
+            relay_warned = 1;
+            srv_log("TURN Allocate received: relay traffic is not implemented; races require direct peer connectivity");
+        }
+    }
     else if (l->kind == K_NAT) r = nat_reply(in, (size_t)n, &p, self_ip, out, sizeof out);
     if (r) sendto(l->s, (const char *)out, (int)r, 0, (struct sockaddr *)&from, fl);
 }
@@ -245,6 +260,8 @@ int srv_main(int argc, char **argv) {
     }
 #ifdef __linux__
     prctl(PR_SET_PDEATHSIG, SIGTERM);   // ends with the game; on Windows the job net_host.c puts it in does it
+    signal(SIGTERM, stop_server);
+    signal(SIGINT, stop_server);
 #endif
     open_log(data_dir);
     char err[256];
@@ -261,8 +278,10 @@ int srv_main(int argc, char **argv) {
     for (int h = 0; h < nhosts; h++) {
         listen_on(hosts[h], port, 0, K_GRPC);
         listen_on(hosts[h], port + 1, 0, K_API);
-        for (size_t k = 0; k < sizeof UDP_PORTS / sizeof *UDP_PORTS; k++)
+        for (size_t k = 0; k < sizeof UDP_PORTS / sizeof *UDP_PORTS; k++) {
+            if (UDP_PORTS[k].port == 3479 && *srv_setting("turn_host", "")) continue; // external coturn owns this port
             listen_on(hosts[h], UDP_PORTS[k].port, 1, UDP_PORTS[k].kind);
+        }
     }
     if (!nls) return 1;
 #ifdef _WIN32
@@ -280,6 +299,9 @@ int srv_main(int argc, char **argv) {
     static struct pollfd pf[MAX_LISTEN + MAX_CONNS];
     int code = 0;
     while (!end || time(NULL) < end) {
+#ifdef __linux__
+        if (stop_requested) break;
+#endif
 #ifdef _WIN32
         if (stop_event && WaitForSingleObject(stop_event, 0) == WAIT_OBJECT_0) break;
 #endif

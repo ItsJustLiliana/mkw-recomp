@@ -26,10 +26,10 @@ static PlatMutex lock = PLAT_MUTEX_INIT;
 static Snapshot snapshot;
 static std::atomic<int> active{IDLE};
 static bool initialized;
-static char join_code[64];
+static char join_code[160];
 static int network;
 static const char *const networks[] = {"auto", "home", "tailscale"};
-struct Task { int action; char endpoint[32]; int network; };
+struct Task { int action; char endpoint[160]; int network; };
 static Task pending{IDLE, "", 0};   // UI thread only: a click during a status probe must not disappear
 
 static int SDLCALL work(void *arg) {
@@ -191,16 +191,16 @@ void online_tab(float scale, float bottom) {
     if (ImGui::Button(menu_text(UI_ONLINE_HOST_FIREWALL))) submit(FIREWALL);
     ImGui::EndDisabled();
     ImGui::TextWrapped("%s", menu_text(UI_ONLINE_HOST_FIREWALL_DESC));
-    ImGui::SeparatorText(menu_text(UI_F1_JOIN));
+    ImGui::SeparatorText(menu_text(UI_ONLINE_SERVER));
     ImGui::SetNextItemWidth(430 * scale);
-    ImGui::InputTextWithHint("##invite", "MKW1-XXXXXXXX-XXXX-XXXX", join_code, sizeof join_code,
+    ImGui::InputTextWithHint("##invite", "server.example:18443 / MKW1-...", join_code, sizeof join_code,
                              ImGuiInputTextFlags_CharsNoBlank);
-    char endpoint[32];
-    bool valid = net_invite_parse(join_code, endpoint) != 0;
+    char endpoint[160];
+    bool valid = net_join_endpoint(join_code, endpoint) != 0;
     ImGui::BeginDisabled(changing || !valid);
     if (ImGui::Button(menu_text(UI_F1_CONNECT))) submit(JOIN, endpoint);
     ImGui::EndDisabled();
-    if (*join_code && !valid) ImGui::TextWrapped("%s", menu_text(UI_F1_INVALID_INVITE));
+    if (*join_code && !valid) ImGui::TextWrapped("%s", menu_text(UI_ONLINE_SERVER_HINT));
     ImGui::BeginDisabled(changing);
     if (ImGui::Button(menu_text(UI_F1_OFF))) submit(OFF);
     ImGui::EndDisabled();

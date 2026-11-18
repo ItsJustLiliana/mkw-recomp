@@ -15,9 +15,31 @@
 #endif
 
 #include <psa/crypto.h>
+#include <mbedtls/base64.h>
 
 #include "platform/platform.h"
 #include "srv.h"
+
+// Coturn's documented TURN REST credential format; no coturn implementation is copied.
+// https://github.com/coturn/coturn/blob/master/README.turnserver
+int srv_turn_credentials(const char *secret, const char *uid, int64_t expiry, char user[96], char password[32]) {
+    user[0] = password[0] = 0;
+    if (strlen(secret) < 32 || !*uid) return 0;
+    snprintf(user, 96, "%lld:%s", (long long)expiry, uid);
+    psa_key_attributes_t attributes = PSA_KEY_ATTRIBUTES_INIT;
+    psa_set_key_type(&attributes, PSA_KEY_TYPE_HMAC);
+    psa_set_key_usage_flags(&attributes, PSA_KEY_USAGE_SIGN_MESSAGE);
+    psa_set_key_algorithm(&attributes, PSA_ALG_HMAC(PSA_ALG_SHA_1));
+    mbedtls_svc_key_id_t key;
+    if (psa_import_key(&attributes, (const uint8_t *)secret, strlen(secret), &key) != PSA_SUCCESS) return 0;
+    uint8_t mac[20];
+    size_t n = 0, encoded = 0;
+    int ok = psa_mac_compute(key, PSA_ALG_HMAC(PSA_ALG_SHA_1), (const uint8_t *)user, strlen(user), mac, sizeof mac, &n) == PSA_SUCCESS;
+    psa_destroy_key(key);
+    if (!ok || n != sizeof mac || mbedtls_base64_encode((uint8_t *)password, 32, &encoded, mac, n)) return 0;
+    password[encoded] = 0;
+    return 1;
+}
 #include "srv_pb.h"
 #include "srv_presence.h"
 #include "srv_store.h"

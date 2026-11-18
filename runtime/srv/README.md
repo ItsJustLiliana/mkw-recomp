@@ -8,7 +8,8 @@ nghttp2 (MIT) and Mbed TLS (Apache-2.0), are fetched and pinned by `tools/build/
 
 | File | Contents |
 |---|---|
-| `srv.h`, `srv_main.c` | `mkw.exe --server [--host ADDR]... [--port P] [--data DIR] [--seconds S]` (`core/boot/main.c`): one thread, one poll loop over every socket; the gRPC port (8443), the friends API (8444), UDP 3478/3479 (STUN) and 10025/10125/33334 (NAT check) on each address; a port another program holds is reported and skipped; at most 256 connections, 16 per address; replies one player's call queued for another's connection go out in the same pass; the sessions' timer each pass; the log in `<data>/logs/server.log` |
+| `srv_standalone.c` | Linux server-only entry point and minimal process/random hooks, enabled only by `tools/build/server.py`; links the existing platform filesystem without SDL or Vulkan |
+| `srv.h`, `srv_main.c` | `mkw.exe --server [--host ADDR]... [--port P] [--data DIR] [--seconds S]` (`core/boot/main.c`): one thread, one poll loop over every socket; default gRPC port 8443 and friends API 8444 (the standalone Linux deployment uses 18443/18444); UDP 3478 (STUN), 3479 unless external coturn is configured, and 10025/10125/33334 (NAT check) on each address; a port another program holds is reported and skipped; at most 256 connections, 16 per address; replies one player's call queued for another's connection go out in the same pass; the sessions' timer each pass; the log in `<data>/logs/server.log` |
 | `srv_net.h` | Sockets on Windows and elsewhere: the types and calls the server's files share |
 | `srv_tls.h`, `srv_tls.c` | Certificates made on the PC at the first start and kept (`<data>/pki`: an RSA-2048 CA the game trusts, never replaced, and a server certificate for the game's host names and the listening addresses, made again when missing); TLS 1.2 and 1.3 with ALPN `h2` (gRPC) or `http/1.1` |
 | `srv_h2.h`, `srv_h2.c` | A player's connection: TLS on a non-blocking socket, HTTP/2 through nghttp2, gRPC framing and the catch-all the game expects (unary: one empty reply; server stream: one empty message then held open, one method ends after it; bidi: nothing until the player half-closes), messages over 1 MiB refused; buffers within 4 MiB per connection and 128 MiB in all (past them a call ends with RESOURCE_EXHAUSTED, a connection that does not read is closed), 32 streams per connection, 10 s to finish TLS |
@@ -17,7 +18,7 @@ nghttp2 (MIT) and Mbed TLS (Apache-2.0), are fetched and pinned by `tools/build/
 | `srv_store.h`, `srv_store.c` | Accounts (only a SHA-256 of each secret), who added or declined whom, settings: `<data>/accounts.tsv`, `links.tsv`, `settings.txt`, written whole and atomically |
 | `srv_presence.h`, `srv_presence.c` | Who is online (calls, open streams), `PresenceService/KeepAlive` (attributes with field masks, an acknowledgement per change and after 5 s of silence, none for heartbeats), `SubscribeFriendUsers` and `SubscribePresences` sent again whenever they change; what the other services know of a player (game, build, last game version shown) |
 | `srv_api.h`, `srv_api.c` | The friends API on the next port (8444) for our runtime's Online page: HTTPS/1.1 with keep-alive, `GET /v1/ca.der`, `GET /v1/friends`, `POST /v1/friends/<request|accept|decline|cancel|remove>`, the player checked by code and secret, flat JSON, 60 requests per address and minute, 15 s idle |
-| `srv_session.h`, `srv_session.c` | Game sessions: rooms (`CreateGameSessionCreationTicket`, `TrackGameSessionCreationTicket`, `JoinGameSession` with version and build checks, 24 players unless `room_size`), `GetGameSession`, room IDs (6 random digits, `GameSessionShortAliases`), `AllocateIceServerSet`; matchmaking tickets (`CreateMatchmakingTicket`, `TrackMatchmakingTicket`, `CancelMatchmakingTicket`) and the matcher each second (promote, backfill into lobbies that allow it, new sessions per game, config, batching key and build; Knockout Tour lobbies take every ticket; `solo_after` 15 s and `knockout_solo_after` 90 s for a lone player), abandoned tickets cancelled, member entries with a credential each, seeded documents, idle sessions dropped after 900 s; at most 256 sessions of 32 members |
+| `srv_session.h`, `srv_session.c` | Game sessions: rooms (`CreateGameSessionCreationTicket`, `TrackGameSessionCreationTicket`, `JoinGameSession` with version and build checks, 24 players unless `room_size`), `GetGameSession`, room IDs (6 random digits, `GameSessionShortAliases`), `AllocateIceServerSet` (advertises expiring coturn credentials when an external relay is configured; the lobby's UDP server itself is not TURN), matchmaking tickets (`CreateMatchmakingTicket`, `TrackMatchmakingTicket`, `CancelMatchmakingTicket`) and the matcher each second (promote, backfill into lobbies that allow it, new sessions per game, config, batching key and build; Knockout Tour lobbies take every ticket; `solo_after` 15 s and `knockout_solo_after` 90 s for a lone player), abandoned tickets cancelled, member entries with a credential each, seeded documents, idle sessions dropped after 900 s; at most 256 sessions of 32 members |
 | `srv_gamesync.c` | Gamesync: `IssueToken` / `RefreshToken` (a token bound to the session whose member entry carried the credential), `GetDocument`, `WriteDocuments` (one batch per request, deferred writes kept per player), `KeepUserSession` (document and query targets, "current" for a participants query held until every member is in, changes sent to every stream that covers them, no echo of unchanged documents, deferred writes and room leave at its end) |
 | `srv_docs.h`, `srv_docs.c` | A session's documents: Update with field masks, Set, Delete, Transform (server time, increment, maximum, minimum, session counters, the `upcsid` station id), write results, batches that know what really changed and are undone whole past the budget (4096 documents, 4 MiB per session, 64 MiB in all) |
 | `srv_value.h`, `srv_value.c` | The game's attribute values (MapValue) as a tree: decoded normalised the way the game reads them back (int64, one string kind, doubles bit-exact), compared, copied, field paths with backtick-quoted segments |
@@ -26,6 +27,21 @@ nghttp2 (MIT) and Mbed TLS (Apache-2.0), are fetched and pinned by `tools/build/
 | `srv_udp.h`, `srv_udp.c` | UDP answers as pure functions of the datagram and its sender: STUN binding (RFC 5389 and 3489), Pia's NAT check (a sender on 127.x is told the server's own address) |
 
 Tests: `tests/test_srv.py` (`tests/c/t_srv.c`; with `MKW_SRV_EXE`, the built executable over UDP and TLS + HTTP/2).
+
+The shared Linux deployment (`tools/build/server.py`, `tools/run/host_server.py`) starts the standalone lobby at TCP
+18443 and its friends API at TCP 18444, and configures a separate coturn process on UDP 3479 with relay ports
+49152–49407. STUN 3478 and the NAT-check ports remain on the lobby server. Router/firewall setup must forward both
+the lobby and relay traffic to the Linux host.
+
+Private rooms default the integer session attribute `rule` to 3 when the creator omits it, keeping the other
+attributes. Creation tracking, room lookup and join return that same stored attribute. Without it, a joiner
+classifies the room as a public race and can stall the host in SyncState for 25 seconds at race start.
+The two-client protocol regression checks all three replies; an actual two-PC race still needs validation.
+
+When no external coturn is configured, `srv_main.c` logs the first TURN Allocate request once per server process,
+without its payload or credentials. This distinguishes an attempted use of an unavailable relay from successful
+STUN binding; it does not prove that a particular race disconnect was caused by the missing relay.
+`test_srv_relay_diagnostic` checks the message.
 
 The F1 roster uses authenticated `POST /v1/clients` heartbeats (every 5 seconds, 20-second leases, at most 64 clients)
 and `POST /v1/clients/leave` on server changes/offline. `srv_api.c` binds the same friend code and secret as the game

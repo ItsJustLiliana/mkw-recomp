@@ -24,6 +24,17 @@ def test_invite_codec(tmp_path: Path) -> None:
 #include "net_invite.h"
 int main(void) {
     char code[32], address[32];
+    char endpoint[160];
+    assert(net_join_endpoint("203.0.113.5:18443", endpoint));
+    assert(!strcmp(endpoint, "203.0.113.5:18443"));
+    assert(net_join_endpoint("kart.example.com:18443", endpoint));
+    assert(net_join_endpoint("kart.example.com", endpoint));
+    assert(!net_join_endpoint("https://kart.example.com", endpoint));
+    assert(!net_join_endpoint("kart.example.com:65534", endpoint));
+    assert(!net_join_endpoint("kart.example.com:18443junk", endpoint));
+    assert(!net_join_endpoint("kart.example.com:", endpoint));
+    assert(!net_join_endpoint("kart.example.com:0", endpoint));
+    assert(!net_join_endpoint("MKW1-broken", endpoint));
     assert(net_invite_make(0x64400001, 8443, code));
     assert(net_invite_parse(code, address));
     assert(!strcmp(address, "100.64.0.1:8443"));

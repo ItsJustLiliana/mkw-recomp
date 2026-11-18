@@ -46,6 +46,7 @@ typedef struct {
     SrvMap attrs;                     // the session attributes (GameSession field 11)
     int64_t created;                  // Unix seconds
     uint64_t changed_ms;              // last document or membership change (idle sessions are dropped)
+    uint64_t created_ms;              // bounded admission while the first players are still loading
     SrvDocs docs;
     SrvReferee referee;
     SrvGsToken tokens[GS_TOKENS_MAX];
@@ -74,7 +75,7 @@ void srv_session_tick(uint64_t now_ms);
 
 // CancelGameSessionCreationTicket has no effect: the unary catch-all's empty reply is all it needs.
 extern const SrvMethod SRV_CREATE_ROOM, SRV_TRACK_ROOM, SRV_JOIN, SRV_GET_SESSION, SRV_CREATE_ALIAS, SRV_GET_ALIAS,
-    SRV_ICE, SRV_CREATE_TICKET, SRV_TRACK_TICKET, SRV_CANCEL_TICKET;
+    SRV_ICE, SRV_CREATE_TICKET, SRV_TRACK_TICKET, SRV_CANCEL_TICKET, SRV_BATCH_SESSIONS;
 
 // srv_gamesync.c: a session's documents changed (s->docs.changed): sent to the streams listening (added: a member
 // joined, "added" rather than "modified"), then the participants queries waiting for everyone are checked again.

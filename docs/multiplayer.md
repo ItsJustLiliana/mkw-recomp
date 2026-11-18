@@ -2,13 +2,15 @@
 
 This branch integrates the private-server and client work from PRs #353 and #354, retains PR #345's VPN LAN support,
 and adds an **Online play** tab to the F1 menu. Online remains off by default. This is experimental: automated server
-protocol tests pass, but a two-PC game race and this client's in-game Online Play flow remain unverified.
+protocol tests pass, but a two-PC game race and the complete in-game Online Play flow remain unverified.
 
 ## Host and join from F1
 
 1. Both players use this modified build and the same game version. Start without mods.
-2. For internet friends, connect both PCs to the same trusted Tailscale network first. On a home LAN, no VPN is needed.
-3. Host: open **F1 > Online play**, select Tailscale (or Home network), then **Start**. Wait for **Local server running**.
+2. For internet play, use the shared Linux server below or connect both PCs to the same trusted Tailscale network.
+   On a home LAN, no VPN is needed.
+3. For a locally hosted server, open **F1 > Online play**, select Tailscale (or Home network), then **Start**. Wait for
+   **Local server running**. For the shared Linux server, do not start a second host here.
 4. Copy the **server invite code** and give it to your friend. It includes the private IPv4 endpoint and a typing-error
    checksum. It is not a password or room reservation; keep VPN membership and firewall access restricted to friends.
 5. Friend: open the same tab, paste the complete `MKW1-...` invite, then **Connect and save server**. The client probes
@@ -26,12 +28,51 @@ Network/probe/process/file operations from F1 run on a worker, not the present o
 existing ImGui controller navigation. Entering or pasting an invite currently needs a keyboard; controller text entry
 is not implemented. Q/E tab shortcuts are suppressed while typing. Worldwide matchmaking is not a verified feature.
 
-The built-in server uses a separate hidden `mkw.exe --server` process, with accounts, certificates and logs under
-`server/` beside the executable. Do not send that directory, `profile/`, saves or game files to friends. It serves
-TLS/gRPC on TCP 8443, the friends API on TCP 8444, STUN on UDP 3478/3479, and NAT checks on UDP 10025/10125/33334.
-The game also uses peer traffic. The firewall button asks Windows to permit this executable from local subnets and
-Tailscale addresses only; it does not configure your router. First-use CA retrieval trusts the selected VPN endpoint;
-server invites carry no cryptographic identity proof. Existing saved CAs are retained by the F1 connection flow.
+The game's socket-backed Online flow also calls `nn::ldn::Initialize`; the runtime treats that as an idle service
+initialization when `MKW_ONLINE=1`, while local-wireless station/access-point operations remain unavailable. This
+avoids turning that setup call into error `2203-0022`; it does not implement wireless emulation or prove a race works.
+
+## Shared public server on Linux
+
+The standalone server and coturn relay are separate processes. Build the lobby with
+`uv run tools/build/server.py`, install coturn at `deps/coturn/bin/turnserver`, then configure and start both with:
+
+```sh
+python tools/run/host_server.py --root /projects/mkw-recomp-server \
+  --lan-ip SERVER_LAN_IP --public-ip ROUTER_PUBLIC_IP --start
+```
+
+This configures the lobby on TCP 18443, its friends API on TCP 18444, and coturn on UDP 3479 with relay ports
+49152–49407. The lobby also needs UDP 3478 (STUN) and 10025, 10125, 33334 (NAT checks). Keep the generated
+`server/settings.txt`, certificates, account data and relay secret private; do not send them to friends.
+
+Forward these ports through every NAT layer, keeping the same external and internal port and protocol:
+
+| Protocol | Ports | Forward to |
+|---|---|---|
+| TCP | 18443, 18444 | the Arch server's LAN address |
+| UDP | 3478, 3479, 10025, 10125, 33334 | the Arch server's LAN address |
+| UDP | 49152–49407 | the Arch server's LAN address |
+
+Reserve the Arch server's LAN address and the downstream router's WAN address in DHCP. If the Arch server is behind
+an AX53 that is itself behind an ISP router, forward the ports on the ISP router to the AX53's WAN address, then
+forward them again on the AX53 to the Arch server. Also permit the same ports in the Arch host firewall. A changing
+public IPv4 must be updated in the server configuration when it changes.
+
+On each game PC, enter the public IPv4 or hostname plus `:18443` in **F1 > Online play**, select **Connect and save**,
+then restart the game before signing in. The embedded host uses TCP 8443/8444 and private-network invites; those are
+not the ports for this standalone Linux service. The matcher supports multiple simultaneous sessions, with a
+per-process cap of 256 sessions; this is not a load test or multi-process clustering.
+
+The game's public TCP lobby and friends API, successful sign-in, and a TURN allocation do not prove a playable race.
+The two-PC race still needs manual validation. If a countdown disconnects, retain both clients' `logs/mkw.log`, the
+server log and the on-screen error code before restarting; the host's Gamesync stream ending alone does not identify
+whether the cause was peer traffic or session synchronization.
+For Tailscale, the online path reports the route address with the overlay's
+`255.192.0.0` mask, so both clients are seen within `100.64.0.0/10`. The firewall button asks Windows to permit this
+executable from local subnets and Tailscale addresses only; it does not configure your router. First-use CA retrieval
+trusts the selected VPN endpoint; server invites carry no cryptographic identity proof. Existing saved CAs are retained
+by the F1 connection flow.
 
 ## Windows build and setup
 
@@ -78,13 +119,19 @@ game packets retain their existing destinations. Tailscale's /32 interface mask 
 reported to the game so Pia accepts the network. This does not change Windows routing. Use numeric IPv4 peers to
 avoid DNS delays. ZeroTier is another candidate, but its address range, subnet and broadcast behavior need testing.
 
-Direct public-IP port forwarding is not supported by the F1 invites: the built-in host binds private interfaces,
-and invite codes accept private IPv4 addresses only. The separate LAN path rejects public destinations and requires
-discovery. Forwarding one UDP port does not solve those problems. A discovery server alone would
-also not solve NAT traversal or relay gameplay. Tailscale may use its own relay infrastructure when direct NAT
-traversal fails; this prototype requires no project-operated permanent central server and adds no UPnP mappings.
+The LAN discovery path rejects public destinations and requires local discovery. For internet play, use the shared
+Linux server above; its F1 server-address field accepts a public IPv4 or hostname and port. Tailscale remains an
+alternative for private groups and does not require router port forwarding.
 
 ## Acceptance test (still required on this branch)
+
+The server now defaults a private room's missing integer `rule` attribute to 3. Previously the host knew it had
+created a private room, but a joiner reading the missing attribute classified it as a public race (rule 0).
+Those different start paths match the reported host waiting 25 seconds in SyncState while the other player
+continues after the host leaves. The regression reproduces the missing attribute on the previous executable,
+then checks creation tracking, room lookup and join on the fixed server. This corrects the protocol defect;
+the reported countdown disconnect still needs a real two-PC retest. Restart the hosting server and create a
+new room: rooms already in memory do not acquire the attribute from a new executable on disk.
 
 Before a game run, record the hypothesis: both clients discover the group and exchange the game's existing race
 traffic over the VPN. Discovery failure points to address selection, peer configuration or firewall policy; joining

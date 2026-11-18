@@ -5,8 +5,8 @@ set to a built mkw executable (beside its libraries): the real `--server` on 127
 and over TLS + HTTP/2 the way the game asks: the certificate chains to the CA the server made and names the game's
 hosts, ALPN is h2, a unary call gets one empty message and grpc-status 0, a server stream one empty message and stays
 open; then a room made, found by its ID and joined, Gamesync between its two players (participants held until both are
-in, no echo of unchanged writes, station ids, a race refereed and closed with ratings, a player leaving), and two
-matchmaking tickets matched into one session.
+in, no echo of unchanged writes, station ids, a race refereed and closed with ratings, a player leaving), matchmaking
+backfill and multiple independent lobbies.
 
 Usage: uv run pytest tests            (MKW_SRV_EXE=build/dist/windows/mkw.exe for the server tests)
 """
@@ -56,6 +56,8 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
     if not exe:
         pytest.skip("MKW_SRV_EXE not set")
     data = tmp_path_factory.mktemp("srvdata")
+    # The three mode flows intentionally perform more than 20 sign-ins from loopback within one minute.
+    (data / "settings.txt").write_text("login_limit=64\n")
     args = [exe, "--server", "--host", "127.0.0.1", "--port", str(PORT), "--data", str(data), "--seconds", "180"]
     # Its log lines also go to stderr: into a file, since a pipe nobody reads fills up and blocks the server.
     err = tmp_path_factory.mktemp("srverr") / "stderr.txt"
@@ -115,6 +117,19 @@ def test_srv_stun_over_udp(server: Path) -> None:
             atype, alen, _, family, xport = struct.unpack(">HHBBH", reply[20:28])
             assert (atype, alen, family) == (0x20, 8, 1) and length == len(reply) - 20
             assert xport ^ 0x2112 == s.getsockname()[1]
+
+
+def test_srv_relay_diagnostic(server: Path) -> None:
+    """An unanswered relay allocation is visible once, without logging payloads or repeated retries."""
+    message = "TURN Allocate received: relay traffic is not implemented"
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        for _ in range(12):
+            s.sendto(struct.pack(">HHI", 3, 0, 0x2112A442) + os.urandom(12), ("127.0.0.1", 3479))
+    log = server / "logs/server.log"
+    deadline = time.monotonic() + 2
+    while message not in log.read_text() and time.monotonic() < deadline:
+        time.sleep(0.02)
+    assert log.read_text().count(message) == 1
 
 
 def frame(kind: int, flags: int, stream: int, payload: bytes = b"") -> bytes:
@@ -186,10 +201,10 @@ class H2:
     """A bare HTTP/2 client over TLS, enough to push the server: frames in and out, flow control on what it sends, no
     HPACK decoding (what the server answered is read from its log)."""
 
-    def __init__(self, data: Path) -> None:
+    def __init__(self, data: Path, port: int = PORT) -> None:
         ctx = ssl.create_default_context(cadata=ssl.DER_cert_to_PEM_cert((data / "pki/ca.der").read_bytes()))
         ctx.set_alpn_protocols(["h2"])
-        self.s = ctx.wrap_socket(socket.create_connection(("127.0.0.1", PORT), timeout=5), server_hostname="localhost")
+        self.s = ctx.wrap_socket(socket.create_connection(("127.0.0.1", port), timeout=5), server_hostname="localhost")
         self.buf, self.conn_win, self.init_win, self.next_sid = b"", 65535, 65535, 1
         self.win: dict[int, int] = {}
         self.ended: set[int] = set()
@@ -439,10 +454,13 @@ def test_srv_friends_api(server: Path) -> None:
     assert api(server, "POST", "/v1/friends/request", *a, body='{"code":"111111111111"}')[0] == 409
     status, mine = api(server, "POST", "/v1/friends/request", *a, body='{"code":"SW-2222-2222-2222"}')
     assert status == 200 and [e["code"] for e in mine["sent"]] == [b[0]] and not mine["friends"]
+    assert api(server, "POST", "/v1/clients", *a)[1]["friends"] == [], "pending requests are not game friends"
     status, theirs = api(server, "GET", "/v1/friends", *b)
     assert status == 200 and [e["code"] for e in theirs["received"]] == [a[0]]
     status, theirs = api(server, "POST", "/v1/friends/accept", *b, body='{"code":"111111111111"}')
     assert status == 200 and [(e["code"], e["online"]) for e in theirs["friends"]] == [(a[0], True)]
+    status, cached = api(server, "POST", "/v1/clients", *a)
+    assert status == 200 and [e["code"] for e in cached["friends"]] == [b[0]], "SDK snapshot includes accepted friends"
     call(h, 5, "/nn.npln.friends.v1.Friends/SubscribeFriendUsers", b"", (("authorization", f"Bearer {bearer_a}"),))
     wait(h, lambda: len(h.data.get(5, b"")) > 5)
     friend = fields(fields(h.data[5][5:])[1][0])
@@ -568,6 +586,45 @@ def signed(h: H2, code: str) -> str:
     return fields(fields(msgs(h.data[sid])[0])[2][0])[2][0].decode()
 
 
+def test_srv_external_turn_credentials(tmp_path: Path) -> None:
+    """Configured coturn receives expiring credentials, checked against an independent HMAC implementation."""
+    import base64
+    import hashlib
+    import hmac
+
+    exe = os.environ.get("MKW_SRV_EXE")
+    if not exe:
+        pytest.skip("MKW_SRV_EXE not set")
+    secret = "test-relay-shared-secret-" + "a" * 32
+    (tmp_path / "settings.txt").write_text(f"turn_host=203.0.113.5\nturn_port=3479\nturn_secret={secret}\n")
+    with (tmp_path / "stderr.txt").open("w") as log:
+        process = subprocess.Popen([exe, "--server", "--host", "127.0.0.1", "--port", "18453",
+                                    "--data", str(tmp_path), "--seconds", "30"], stderr=log)
+    try:
+        deadline = time.monotonic() + 15
+        while time.monotonic() < deadline:
+            assert process.poll() is None, (tmp_path / "stderr.txt").read_text()
+            try:
+                socket.create_connection(("127.0.0.1", 18453), timeout=0.2).close()
+                break
+            except OSError:
+                time.sleep(0.05)
+        connection = H2(tmp_path, port=18453)
+        token = signed(connection, "818181818181")
+        response = unary(connection, GSS + "AllocateIceServerSet", b"", token)
+        relay = fields(response[3][0])
+        assert relay[1] == [b"203.0.113.5"] and relay[2] == [3479]
+        username, password = relay[4][0], relay[5][0]
+        expires, user = username.decode().split(":", 1)
+        assert int(expires) > time.time() and user == f"u-{818181818181:016x}"
+        expected = base64.b64encode(hmac.new(secret.encode(), username, hashlib.sha1).digest())
+        assert password == expected and secret.encode() not in password
+        connection.s.close()
+    finally:
+        process.terminate()
+        process.wait(timeout=10)
+
+
 def events(h: H2, sid: int) -> list[tuple]:
     """A listen stream's responses: ("target", id, state) and ("doc", id, kind, path, fields)."""
     out: list[tuple] = []
@@ -613,7 +670,9 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     ua, ub = f"{333333333333:016x}", f"{444444444444:016x}"
     attrs = mapmsg({"batching_key": "cv1"})
     host = pb(1, "tenants/current/users/current") + pb(2, attrs)
-    ticket = pb(2, f"tenants/{TENANT}/matchmakingConfigs/Room") + pb(3, host) + pb(6, pb(11, mapmsg({"r": 1})))
+    room_attrs = {"rom_id": "cv1", "course_id": 3, "user_name": "Host"}
+    expected_attrs = {**room_attrs, "rule": 3}
+    ticket = pb(2, f"tenants/{TENANT}/matchmakingConfigs/Private24") + pb(3, host) + pb(6, pb(11, mapmsg(room_attrs)))
     made = unary(a, GSS + "CreateGameSessionCreationTicket", pb(1, "tenants/current") + pb(2, ticket), ta)
     ct = made[1][0].decode()
     assert ct.startswith(f"tenants/{TENANT}/gameSessionCreationTickets/") and made[4] == [1], made
@@ -621,7 +680,8 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     assert tracked[4] == [2] and len(tracked[5]) == 1
     gs = fields(tracked[6][0])
     name = gs[1][0].decode()
-    assert gs[8] == [b"gamesync.npln.nintendo.net"] and gs[9] == [443] and 12 not in gs and mapof(gs[11][0]) == {"r": 1}
+    assert gs[8] == [b"gamesync.npln.nintendo.net"] and gs[9] == [443] and 12 not in gs
+    assert mapof(gs[11][0]) == expected_attrs, "the joiner must classify this session as a private room (rule 3)"
     entry = fields(tracked[5][0])
     assert entry[2][0].decode() == f"{name}/userSessions/us-{ua}"
     cred_a = entry[3][0]
@@ -633,7 +693,13 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     assert len(digits) == 6 and digits.isdigit()
     typed = f"tenants/current/GameSessionShortAliases/{digits[:3]} {digits[3:]}"  # as the game shows it
     assert unary(b, GSS + "GetGameSessionShortAlias", pb(1, typed), tb)[2] == [name.encode()]
+    found = unary(b, GSS + "GetGameSession", pb(1, name), tb)
+    assert mapof(found[11][0]) == expected_attrs, "room-code lookup must return the private-room rule"
+    batch = unary(b, GSS + "BatchGetGameSessions", pb(1, "tenants/current") + pb(2, name)
+                  + pb(2, "tenants/current/gameSessions/missing"), tb)
+    assert len(batch[1]) == 1 and mapof(fields(batch[1][0])[11][0]) == expected_attrs
     joined = unary(b, GSS + "JoinGameSession", pb(1, name) + pb(3, pb(2, attrs)), tb)
+    assert mapof(fields(joined[2][0])[11][0]) == expected_attrs
     entries = [fields(e) for e in joined[1]]
     assert [e[2][0].decode().rsplit("/", 1)[1] for e in entries] == [f"us-{ua}", f"us-{ub}"]
     cred_b = entries[1][3][0]
@@ -643,8 +709,12 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     assert {x["code"] for x in party["members"]} == {"333333333333", "444444444444"}
     _, outsider = api(server, "POST", "/v1/clients", "909090900003", "ce" * 32)
     assert not outsider["room"] and not outsider["members"]
-    ice = fields(unary(b, GSS + "AllocateIceServerSet", b"", tb)[2][0])
+    ice_set = unary(b, GSS + "AllocateIceServerSet", b"", tb)
+    ice = fields(ice_set[2][0])
+    relay = fields(ice_set[3][0])
     assert ice[1] == [b"stun.npln.nintendo.net"] and ice[2] == [3478]
+    assert relay[1] == [b"relay.npln.nintendo.net"] and relay[2] == [3479] and relay[3] == [1]
+    assert relay[4] and relay[5]
 
     def token(h: H2, us: str, cred: bytes) -> str:
         r = unary(h, GSYNC + "IssueToken", pb(1, f"userSessions/us-{us}") + pb(2, cred), tenant=False)
@@ -670,7 +740,7 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     assert [(e[2], e[3]) for e in ev if e[0] == "doc" and e[1] == "2"] == [(1, "__gs/f"), (3, "no")]
     assert ("target", "2", 2) in ev and ("target", "3", 2) in ev
     gsf = next(e[4] for e in ev if e[0] == "doc" and e[3] == "__gs/f")
-    assert gsf["gsid"] == name.rsplit("/", 1)[1] and gsf["mcn"] == "Room" and gsf["maxu"] == 24 and gsf["p"] == 0
+    assert gsf["gsid"] == name.rsplit("/", 1)[1] and gsf["mcn"] == "Private24" and gsf["maxu"] == 24 and gsf["p"] == 0
     us = {e[3]: e[4] for e in ev if e[0] == "doc" and e[1] == "4"}
     assert us[f"__us/us-{ua}"]["ussid"] == 1 and us[f"__us/us-{ub}"]["ussid"] == 2 and us[f"__us/us-{ua}"]["st"] == 2
 
@@ -721,14 +791,15 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     b.s.close()
 
 
-def test_srv_matchmaking(server: Path) -> None:
+@pytest.mark.parametrize(("mode", "rule"), [("Normal24", 0), ("Battle24", 5), ("Survival24", 6)])
+def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     """Two players' tickets in the same queue are matched into one session: each tracking stream sees SEARCHING, then
     PLACING, then SUCCEEDED with both member entries and the session, and ends; a cancelled ticket ends CANCELLED.
     Then the lobby allows backfill (__gs/m.ebf) with a player really in it: a third player's ticket joins it, and the
     stream listening sees the newcomer's __us document "added"."""
     c, d = H2(server), H2(server)
     tc, td = signed(c, "555555555555"), signed(d, "666666666666")
-    config = f"tenants/{TENANT}/matchmakingConfigs/Normal24"
+    config = f"tenants/{TENANT}/matchmakingConfigs/{mode}"
 
     def ticket(h: H2, tok: str, key: str) -> bytes:
         member = pb(1, "tenants/current/users/current") + pb(2, mapmsg({"batching_key": key, "npln_user_id": "x"}))
@@ -757,9 +828,17 @@ def test_srv_matchmaking(server: Path) -> None:
             f"tenants/{TENANT}/users/u-{666666666666:016x}",
         ]
         session = fields(last[7][0])
-        assert mapof(session[11][0]) == {"batching_key": "cv7"} and session[8] == [b"gamesync.npln.nintendo.net"]
+        assert mapof(session[11][0]) == {"batching_key": "cv7", "rule": rule}
+        assert session[8] == [b"gamesync.npln.nintendo.net"]
         assert all(fields(e)[3][0] for e in last[6]), "each member's credential"
     assert [fields(m)[5][0] for m in msgs(c.data[cancel])] == [1, 6] and cancel in c.ended
+
+    # Fill the newly formed lobby while its first clients are still loading, before any __pus/ebf write.
+    f = H2(server)
+    tf = signed(f, "888888888888")
+    session_name = fields(fields(msgs(c.data[streams[0][1]])[-1])[7][0])[1][0]
+    early = unary(f, GSS + "JoinGameSession", pb(1, session_name), tf)
+    assert len(early[1]) == 3, "free seats are available during initial lobby loading"
 
     uc, ue = f"{555555555555:016x}", f"{777777777777:016x}"
     entry = fields(fields(msgs(c.data[streams[0][1]])[-1])[6][0])
@@ -778,9 +857,58 @@ def test_srv_matchmaking(server: Path) -> None:
     pump_all([c, e], lambda: se in e.ended, 6)
     assert [fields(m)[5][0] for m in msgs(e.data[se])] == [1, 2, 3]
     entries = [fields(x) for x in fields(msgs(e.data[se])[-1])[6]]
-    assert [x[2][0].decode().rsplit("/", 1)[1] for x in entries][-1] == f"us-{ue}" and len(entries) == 3
+    assert [x[2][0].decode().rsplit("/", 1)[1] for x in entries][-1] == f"us-{ue}" and len(entries) == 4
     added = [x for x in events(c, lc) if x[0] == "doc" and x[3] == f"__us/us-{ue}"]
-    assert added and added[0][2] == 1 and added[0][4]["ussid"] == 3, added
+    assert added and added[0][2] == 1 and added[0][4]["ussid"] == 4, added
+    # Friend-card lookup and direct join use the same public lobby, with the mode's actual rule.
+    batch = unary(f, GSS + "BatchGetGameSessions", pb(1, "tenants/current") + pb(2, session_name), tf)
+    assert fields(batch[1][0])[1] == [session_name]
+    assert mapof(fields(batch[1][0])[11][0])["rule"] == rule
+    joined = unary(f, GSS + "JoinGameSession", pb(1, session_name), tf)
+    assert len(joined[1]) == 4, "a friend joins the accepting existing public lobby"
+    outsider = H2(server)
+    outsider_token = signed(outsider, "999999999999")
+    write(c, gc, w_set("__gs/m", {"cp": True, "ip": True, "ebf": True, "bfmax": 4}))
+    assert not unary(outsider, GSS + "JoinGameSession", pb(1, session_name), outsider_token), "full lobby refuses join"
+    write(c, gc, w_set("__gs/m", {"cp": False, "ip": True, "ebf": True}))
+    assert not unary(outsider, GSS + "JoinGameSession", pb(1, session_name), outsider_token), "closed lobby refuses join"
+    rejected = unary(d, GSS + "JoinGameSession", pb(1, session_name), td)
+    assert rejected, "an existing member may reconnect even after admission closes"
     assert "joined gs-" in (server / "logs/server.log").read_text()
-    for h in (c, d, e):
+    for h in (c, d, e, f, outsider):
         h.s.close()
+
+
+def test_srv_multiple_matchmaking_lobbies(server: Path) -> None:
+    """A full queue is split into separate sessions; all four players complete in two simultaneous lobbies."""
+    clients = [H2(server) for _ in range(4)]
+    try:
+        tokens = [signed(h, f"{700000000000 + i:012d}") for i, h in enumerate(clients)]
+        config = f"tenants/{TENANT}/matchmakingConfigs/Normal2"
+        names = []
+        for i, (h, token) in enumerate(zip(clients, tokens, strict=True)):
+            member = pb(1, "tenants/current/users/current") + pb(
+                2, mapmsg({"batching_key": "multi-lobby", "npln_user_id": str(i)})
+            )
+            created = unary(
+                h, MM + "CreateMatchmakingTicket", pb(1, "tenants/current") + pb(2, pb(2, config) + pb(4, member)),
+                token,
+            )
+            names.append(created[1][0])
+
+        streams = [h.sid() for h in clients]
+        for h, token, sid, name in zip(clients, tokens, streams, names, strict=True):
+            call(h, sid, MM + "TrackMatchmakingTicket", pb(1, name), headers(token))
+        pump_all(clients, lambda: all(sid in h.ended for h, sid in zip(clients, streams, strict=True)), 15)
+
+        sessions = []
+        for h, sid in zip(clients, streams, strict=True):
+            assert sid in h.ended, "every matchmaking ticket should complete"
+            terminal = fields(msgs(h.data[sid])[-1])
+            assert terminal[5] == [3]
+            assert len(terminal[6]) == 2, "each lobby contains exactly the configured two players"
+            sessions.append(fields(terminal[7][0])[1][0])
+        assert len(set(sessions)) == 2, "the full queue is served by two independent game sessions"
+    finally:
+        for h in clients:
+            h.s.close()

@@ -853,6 +853,7 @@ static void party_request(const char *server, int leave, NetParty *out) {
     } else if (!leave) {
         json_entries(reply.body, "clients", out->clients, &out->nclients);
         json_entries(reply.body, "members", out->members, &out->nmembers);
+        json_entries(reply.body, "friends", out->friends, &out->nfriends);
         const char *room = json_key(reply.body, reply.body + reply.len, "room");
         if (room) json_string(room, out->room, sizeof out->room);
     }

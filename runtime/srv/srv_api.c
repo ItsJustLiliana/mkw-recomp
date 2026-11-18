@@ -366,6 +366,10 @@ static void client_status(SrvApi *a, const Req *r, int leave) {
         for (int i = 0; i < room->nmembers; i++)
             client_row(&t, srv_uid_code(room->members[i].uid), i);
     }
+    tput(&t, "],\"friends\":[");
+    uint64_t friends[LIST_MAX];
+    int nf = srv_friends(code, friends, LIST_MAX);
+    for (int i = 0; i < nf; i++) client_row(&t, friends[i], i);
     tput(&t, "]}");
     reply_json(a, 200, &t);
 }

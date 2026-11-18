@@ -12,6 +12,7 @@
 
 #include "kernel.h"
 #include "host.h"
+#include "net_online.h"
 #include "ov.h"
 #include "ov_probe.h"
 #include "platform/platform.h"
@@ -62,6 +63,7 @@ static void probe_offline(void) {
         // nn::socket as with the network down (ov_net.c): every socket call -1, errno ENETDOWN
         {"socket::internal::Initialize", 0}, {"socket::SetAllocator", VOID}, {"socket::Finalize", 0}, {"socket::IsInitialized", 1}, {"socket::GetLastErrno", SOCK_ENETDOWN}, {"socket::GetLastError", SOCK_ENETDOWN}, {"socket::Socket(int)", -1}, {"socket::Socket", -1}, {"socket::EventFd", -1}, {"socket::EventFdRead", -1}, {"socket::EventFdWrite", -1}, {"socket::Bind", -1}, {"socket::Bind(sockaddr)", -1}, {"socket::SetSockOpt", -1}, {"socket::SendTo(sockaddr)", -1}, {"socket::SendTo", -1}, {"socket::RecvFrom(sockaddr)", -1}, {"socket::RecvFrom", -1}, {"socket::Poll", -1}, {"socket::Shutdown", -1}, {"socket::Close", -1}, {"socket::GetAddrInfo(addrinfo)", SOCK_EAI_FAIL}, {"socket::GetAddrInfo", SOCK_EAI_FAIL}, {"socket::FreeAddrInfo(addrinfo)", VOID}, {"socket::FreeAddrInfo", VOID},
     };
+    plat_setenv("MKW_ONLINE", "0");
     uint8_t *b = ovp_alloc(8 * 0x400);
     int bad = 0;
     for (size_t i = 0; i < sizeof cases / sizeof *cases; i++) {
@@ -101,6 +103,35 @@ static void probe_offline(void) {
            ip[4], ip[5], ip[6], ip[7]);
     CALL("nifm::SetLocalNetworkMode", 0);
     plat_setenv("MKW_LAN", "");
+}
+
+static void probe_online_ldn_initialize(void) {
+    plat_setenv("MKW_ONLINE", "1");
+    uint64_t r = CALL("ldn::Initialize");
+    CHECK(r == 0, "ldn::Initialize in online mode");
+    printf("net: ldn initialize in online mode: %s\n", r == 0 ? "ok" : "failed");
+    plat_setenv("MKW_ONLINE", "0");
+}
+
+static void probe_online_tailscale_mask(void) {
+    NetAddrs addrs;
+    net_addrs(&addrs);
+    if (!addrs.ts[0]) {
+        printf("net: online Tailscale mask: skipped (no Tailscale route)\n");
+        return;
+    }
+    char server[32];
+    snprintf(server, sizeof server, "%s:8443", addrs.ts);
+    plat_setenv("MKW_ONLINE_SERVER", server);
+    plat_setenv("MKW_ONLINE", "1");
+    uint8_t *b = ovp_alloc(32);
+    memset(b, 0, 32);
+    uint64_t r = CALL("nifm::GetCurrentIpConfigInfo", U(b), U(b + 4), U(b + 8), U(b + 12), U(b + 16));
+    CHECK(r == 0 && b[0] == 100 && b[1] >= 64 && b[1] <= 127, "online Tailscale IP config result %#llx", r);
+    CHECK(b[4] == 255 && b[5] == 192 && b[6] == 0 && b[7] == 0, "online Tailscale mask %u.%u.%u.%u",
+          b[4], b[5], b[6], b[7]);
+    printf("net: online Tailscale mask: %u.%u.%u.%u\n", b[4], b[5], b[6], b[7]);
+    plat_setenv("MKW_ONLINE", "0");
 }
 
 // ---- account: the one local user, its network service account unavailable
@@ -421,6 +452,8 @@ static void probe_socket(void) {
 
 void probe_mkw_services(void) {
     probe_offline();
+    probe_online_ldn_initialize();
+    probe_online_tailscale_mask();
     probe_account_mkw();
     probe_system_mkw();
     probe_codec();

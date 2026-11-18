@@ -37,6 +37,7 @@ extern "C" {
 #include "sysinfo.h"
 #include "ui/menu/menu.h"
 #include "ui_text.h"
+#include "swkbd.h"
 // host.h and vk.h pull in cpu.h, which is C only: the functions the menu needs from them, as declared there.
 void rt_log(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 void vk_queue_lock(void);
@@ -70,8 +71,13 @@ static int change_open(int want) {
 static void set_open(int open) { change_open(open); }
 
 static int g_failed_flag();
-extern "C" int menu_is_open(void) { return g_open.load(std::memory_order_relaxed); }
+extern "C" int menu_is_open(void) { return g_open.load(std::memory_order_relaxed) || text_entry_active(); }
 extern "C" void menu_toggle(void) {
+    if (text_entry_active()) {
+        SwkbdRequest request;
+        text_entry_finish(text_entry_snapshot(&request), nullptr);
+        return;
+    }
     if (!g_failed_flag()) change_open(-1);
 }
 
@@ -115,6 +121,65 @@ static void drain_events(ImGuiIO &io) {
         case EV_FOCUS: io.AddFocusEvent(e.a != 0); break;
         }
     }
+}
+
+static int text_filter(ImGuiInputTextCallbackData *data) {
+    const SwkbdRequest *r = (const SwkbdRequest *)data->UserData;
+    return !swkbd_allowed((uint16_t)data->EventChar, r->disabled, r->numeric);
+}
+
+// Drawn even with F1 closed: ShowKeyboard is a game dialog, not a settings page.
+static void layout_text_entry(float width, float height, float scale) {
+    SwkbdRequest request;
+    unsigned id = text_entry_snapshot(&request);
+    if (!id) return;
+    static unsigned shown;
+    static char text[KB_LIMIT * 4 + 1];
+    bool first = id != shown;
+    if (first) {
+        shown = id;
+        size_t n = 0;
+        while (n < KB_LIMIT && request.initial[n]) n++;
+        swkbd_utf16_to_utf8(request.initial, n, text, sizeof text);
+    }
+    char prompt[0x101 * 4 + 1];
+    swkbd_utf16_to_utf8(request.prompt, 0x100, prompt, sizeof prompt);
+    ImGui::SetNextWindowPos(ImVec2(width * 0.5f, height * 0.5f), ImGuiCond_Always, ImVec2(0.5f, 0.5f));
+    ImGui::SetNextWindowSize(ImVec2(fminf(width * 0.9f, 560 * scale), 0));
+    ImGui::Begin("##game_text_entry", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize);
+    if (*prompt) ImGui::TextWrapped("%s", prompt);
+    if (first) ImGui::SetKeyboardFocusHere();
+    ImGui::SetNextItemWidth(-1);
+    ImGuiInputTextFlags flags = ImGuiInputTextFlags_EnterReturnsTrue | ImGuiInputTextFlags_CallbackCharFilter;
+    if (request.password) flags |= ImGuiInputTextFlags_Password;
+    bool accept = ImGui::InputText("##answer", text, sizeof text, flags, text_filter, &request);
+    if (request.numeric) {
+        for (int i = 0; i < 10; i++) {
+            char digit[2] = {(char)('0' + (i + 1) % 10), 0};
+            if (i % 3) ImGui::SameLine();
+            if (ImGui::Button(digit, ImVec2(90 * scale, 40 * scale))) {
+                size_t n = strlen(text);
+                if (n < (size_t)request.max_len && n + 1 < sizeof text &&
+                    swkbd_allowed(digit[0], request.disabled, 1)) text[n] = digit[0], text[n + 1] = 0;
+            }
+        }
+        ImGui::SameLine();
+        if (ImGui::Button(menu_text(UI_KEY_BACKSPACE))) {
+            size_t n = strlen(text);
+            if (n) text[n - 1] = 0;
+        }
+    }
+    uint16_t units[KB_LIMIT + 1];
+    size_t n = swkbd_utf8_to_utf16(text, units, KB_LIMIT + 1);
+    bool valid = n >= (size_t)request.min_len && n <= (size_t)request.max_len;
+    ImGui::BeginDisabled(!valid);
+    if (ImGui::Button(menu_text(UI_MOD_OK))) accept = true;
+    ImGui::EndDisabled();
+    ImGui::SameLine();
+    bool cancel = ImGui::Button(menu_text(UI_LAUNCH_CANCEL)) || ImGui::IsKeyPressed(ImGuiKey_Escape) ||
+                  ImGui::IsKeyPressed(ImGuiKey_GamepadFaceRight);
+    if (cancel || (accept && valid)) text_entry_finish(id, cancel ? nullptr : text);
+    ImGui::End();
 }
 
 // ---- gamepad navigation: the Switch buttons of our SDL3 gamepad to ImGui's gamepad keys. Nintendo layout: A (east)
@@ -614,7 +679,8 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     if (g_perf_save.exchange(0)) cfg_save();
     perf_tick(plat_now_ns(), frame, t);
     classic_poll();   // MKW_CLASSIC_GP changed: the cups in the game's memory (core/hacks/classic.c)
-    bool open = g_open.load(std::memory_order_relaxed);
+    bool keyboard = text_entry_active() != 0;
+    bool open = g_open.load(std::memory_order_relaxed) || keyboard;
     if (!open) {
         if (g_save_pending) g_save_pending = opt_save_tick(1);   // closed: the last change goes to mkw.ini now
         if (g_test.at && !g_test.opened && frame >= g_test.at) {
@@ -628,6 +694,7 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
         }
     }
     if (g_failed_flag()) {
+        if (keyboard) { SwkbdRequest r; text_entry_finish(text_entry_snapshot(&r), nullptr); }
         set_open(0);
         return 0;
     }
@@ -637,6 +704,7 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     if (!vk_up(t) || ((g_font_scale != scale || menu_look_fonts_stale()) && !fonts_up(scale))) {
         rt_log("menu: Dear ImGui Vulkan back end set-up failed; the menu stays closed");
         g_failed.store(1);
+        if (keyboard) { SwkbdRequest r; text_entry_finish(text_entry_snapshot(&r), nullptr); }
         set_open(0);
         return 0;
     }
@@ -647,7 +715,9 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     }
     settings_list_gpus(t->instance);
     ImGuiIO &io = ImGui::GetIO();
-    int reset = g_reset.exchange(0);
+    static bool was_keyboard;
+    int reset = g_reset.exchange(0) || keyboard != was_keyboard;
+    was_keyboard = keyboard;
     if (reset) {
         io.ClearInputKeys();
         io.ClearInputMouse();
@@ -671,7 +741,8 @@ extern "C" int menu_overlay_frame(uint64_t frame, const MenuTarget *t, const cha
     ImGui_ImplVulkan_NewFrame();
     ui_id_check("in-game menu");
     ImGui::NewFrame();
-    if (open) layout_menu(t->width, t->height, scale);
+    if (keyboard) layout_text_entry((float)t->width, (float)t->height, scale);
+    else if (open) layout_menu(t->width, t->height, scale);
     perf_draw(t, scale);
     menu_notice_draw((float)t->width, scale);
     ImGui::Render();
