@@ -1,3 +1,11 @@
+## Launcher-based race disconnect diagnostics
+
+With a distribution Windows build, open the **Online** tab on the start screen and expand **Race connection diagnostics**. Check **Log race connection issues**, then click **Play**. The launcher persists `MKW_NET_TRACE=1` and `MKW_SEQ_WATCH=1` in the selected installation's `mkw.ini`; Play starts the game in a fresh process so both are active from boot. **No manual edits or code injection required.** Repeat on both PCs.
+
+After a failed race, collect the normal `logs/mkw.log` from each installation. Useful lines are `net-udp:` (socket packet/byte counters), `net-socket:` (nontransient guest socket errors and caller return address), and `seq:` (game phases, including P2PSync and AppErrorViewer). The game may still display a generic disconnect; these are diagnostic signals, not a promise to decode the game's private error result.
+
+Switch **Log race connection issues** off after capturing the logs to avoid diagnostic overhead. The Arch lobby/relay services do **not** need updating for this Windows-client change.
+
 # Multiplayer prototype
 
 This branch integrates the private-server and client work from PRs #353 and #354, retains PR #345's VPN LAN support,
