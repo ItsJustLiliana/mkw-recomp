@@ -1306,6 +1306,15 @@ static void files_summary(const SetupState &st, float act_h) {
     if (ImGui::Button(menu_text(UI_LAUNCH_OPEN_FOLDER), ImVec2(0, act_h))) plat_open_folder(cfg_game_dir());
     ImGui::SameLine();
     game_dir_button(st, act_h);
+    // A visible repair action even when the optional setup panel is collapsed
+    // or the old source location is not currently selected in the picker.
+    if (L.tools) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(st.running);
+        if (ImGui::Button(menu_text(UI_LAUNCH_SETUP_AGAIN), ImVec2(0, act_h)))
+            setup_start(L.exe_dir, cfg_game_dir(), nullptr, -1);
+        ImGui::EndDisabled();
+    }
     game_dir_notes();
     card_end(LOOK_LINE, LOOK_ROW);
 }
