@@ -41,6 +41,7 @@ typedef int HostSock;
 #include <stdlib.h>
 #include <string.h>
 
+#include "cfg.h"
 #include "host.h"
 #include "net_online.h"
 #include "ov.h"
@@ -346,7 +347,10 @@ static PlatMutex fd_lock = PLAT_MUTEX_INIT;
 // Opt-in packet *metadata* (never payloads): MKW_NET_TRACE=1 in the process
 // environment. Rate-limited to the first packet, then every 256 packets /
 // first 12 UDP errors per socket, to remain useful during long races.
-static int udp_trace(void) { return cfg_bool("MKW_NET_TRACE"); }
+static int udp_trace(void) {
+    const char *v = cfg_get("MKW_NET_TRACE");
+    return v && *v && strcmp(v, "0") != 0;
+}
 static void udp_log_io(GFd *f, int fd, int tx, long n, int err) {
     if (!udp_trace() || !f || f->type != 2) return;
     if (n < 0) {
