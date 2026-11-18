@@ -74,6 +74,10 @@ jobs:
           set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if test -f docs/project/multiplayer.md; then
+            echo "Layout already migrated"
+            exit 0
+          fi
           git fetch https://github.com/adriadam10/mkw-recomp.git main
           git show FETCH_HEAD:docs/README.md > docs/README.md
           git show FETCH_HEAD:tests/README.md > tests/README.md
@@ -91,3 +95,18 @@ jobs:
           git add -A
           git commit -m "refactor(multiplayer): align tests and docs with upstream layout"
           git push origin HEAD:integration/upstream-main-multiplayer
+
+  validate:
+    needs: layout
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/upstream-main-multiplayer
+      - uses: astral-sh/setup-uv@v6
+      - name: Validate layout, settings and Python
+        run: |
+          uv run ruff check tools sm86
+          uv run tools/docs/check.py
+          uv run tools/git/cfg_rows.py
+          uv run pytest tests/runtime/test_online_clock.py tests/runtime/test_lan_peers.py tests/runtime/test_net_invite.py tests/runtime/test_net_listen.py
