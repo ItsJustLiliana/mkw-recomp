@@ -776,12 +776,23 @@ def test_srv_room_gamesync_referee(server: Path) -> None:
     assert final["result"] == [0, 1] and final["user_session_count"] == 2
     assert final["ratings"] == {"1": 1512.0, "2": 1488.0} and final["coefficients"] == {"1": 0.0, "2": 0.0}
 
-    # B registers "delete my participation record" for when it leaves, then leaves: half-closes its stream.
+    # B registers "delete my participation record" for when its last listen stream ends.
     deferment = pb(1, "userSessions/current/deferments/leave") + pb(2, pb(4, pb(1, "docs/" + pb_)))
     write(b, gb, extra=pb(2, pb(1, pb(1, deferment))))
-    b.s.sendall(frame(0, 1, lb))  # END_STREAM
-    pump_all([a, b], lambda: lb in b.ended and any(e[2] == 3 and e[3] == f"__us/us-{ub}" for e in docs_of(a, la, "4")))
-    assert lb in b.ended, "the listen stream ends promptly after the half-close"
+    # A reconnect can temporarily overlap the old KeepUserSession with a replacement.
+    # Closing only the old stream must not run the player's deferred deletion.
+    lb2 = b.sid()
+    call(b, lb2, GSYNC + "KeepUserSession", targets, headers(gb, False), end=False)
+    pump_all([a, b], lambda: len(events(b, lb2)) >= 10)
+    b.s.sendall(frame(0, 1, lb))
+    pump_all([a, b], lambda: lb in b.ended)
+    assert lb in b.ended, "the superseded listen stream ends promptly"
+    pump_all([a, b], lambda: False, 0.3)
+    assert not any(e[2] == 3 and e[3] in (pb_, f"__us/us-{ub}") for e in docs_of(a, la, "4") + docs_of(a, la, "1"))
+    assert station(b, gb) == 20002, "the active replacement stream keeps the player in the room"
+    b.s.sendall(frame(0, 1, lb2))
+    pump_all([a, b], lambda: lb2 in b.ended and any(e[2] == 3 and e[3] == f"__us/us-{ub}" for e in docs_of(a, la, "4")))
+    assert lb2 in b.ended, "the last listen stream ends promptly"
     gone = [(e[1], e[3]) for e in events(a, la) if e[0] == "doc" and e[2] == 3]
     assert ("1", pb_) in gone and ("4", f"__us/us-{ub}") in gone, gone
     log = (server / "logs/server.log").read_text()
