@@ -66,6 +66,6 @@ int main(void) {
 '''
     src, exe = tmp_path / "friends.c", tmp_path / "friends.exe"
     src.write_text(code)
-    subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'runtime/sdk/ov'}",
+    subprocess.run([cc, "-std=c11", "-Wall", "-Wextra", "-Werror", "-D_CRT_SECURE_NO_WARNINGS", f"-I{ROOT / 'runtime/sdk/ov'}",
                     str(src), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
