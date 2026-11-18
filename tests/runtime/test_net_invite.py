@@ -66,6 +66,6 @@ int main(void) {
 }
 ''')
     exe = tmp_path / "invite.exe"
-    subprocess.run([cc, "-std=gnu11", "-Wall", "-Wextra", "-Werror", f"-I{ROOT / 'runtime/sdk/ov'}",
+    subprocess.run([cc, "-std=gnu11", "-Wall", "-Wextra", "-Werror", "-D_CRT_SECURE_NO_WARNINGS", f"-I{ROOT / 'runtime/sdk/ov'}",
                     str(source), "-o", str(exe)], check=True)
     subprocess.run([str(exe)], check=True)
