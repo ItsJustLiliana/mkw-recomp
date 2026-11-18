@@ -59,3 +59,35 @@ jobs:
           git restore --source=HEAD --staged --worktree -- .github/workflows/
           git commit -m "chore(multiplayer): integrate upstream main preserving feature-side overlap"
           git push origin HEAD:integration/upstream-main-multiplayer
+
+  layout:
+    needs: merge
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: integration/upstream-main-multiplayer
+          fetch-depth: 0
+      - name: Adopt upstream documentation and test layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git fetch https://github.com/adriadam10/mkw-recomp.git main
+          git show FETCH_HEAD:docs/README.md > docs/README.md
+          git show FETCH_HEAD:tests/README.md > tests/README.md
+          git mv docs/multiplayer.md docs/project/multiplayer.md
+          sed -i 's@../tools/@../../tools/@g; s@../runtime/@../../runtime/@g; s@../tests/@../../tests/@g' docs/project/multiplayer.md
+          for p in test_lan_peers.py test_net_invite.py test_net_listen.py test_online_clock.py test_online_friends.py test_online_input.py test_srv.py; do
+            git mv "tests/$p" "tests/runtime/$p"
+            sed -i 's@parents\[1\]@parents[2]@g; s@tests/c/@tests/runtime/@g' "tests/runtime/$p"
+          done
+          git rm tests/c/README.md
+          printf '\n| [multiplayer.md](multiplayer.md) | Experimental F1 online server, VPN setup and real two-PC acceptance test |\n' >> docs/project/README.md
+          printf '\n| llvm_clang.py | Shared LLVM/Clang compiler setup helpers for Windows and Linux builds | Internal build helper |\n' >> tools/build/README.md
+          printf '\n| t_net_listen.c | test_net_listen.py | Debounced address changes and server listener restart |\n| t_srv.c | test_srv.py | Online server protocol, Gamesync, sessions and referee |\n' >> tests/runtime/README.md
+          printf '\nOnline protocol regressions in this folder: test_lan_peers.py, test_net_invite.py, test_net_listen.py, test_online_clock.py, test_online_friends.py, test_online_input.py, and test_srv.py.\n' >> tests/runtime/README.md
+          git add -A
+          git commit -m "refactor(multiplayer): align tests and docs with upstream layout"
+          git push origin HEAD:integration/upstream-main-multiplayer
