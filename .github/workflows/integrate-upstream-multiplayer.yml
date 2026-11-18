@@ -54,5 +54,8 @@ jobs:
             git diff --name-only --diff-filter=U
             exit 1
           fi
+          # The workflow token cannot modify workflow files. Keep this branch's workflows;
+          # merge all other upstream code, then review upstream workflow changes separately.
+          git restore --source=HEAD --staged --worktree -- .github/workflows/
           git commit -m "chore(multiplayer): integrate upstream main preserving feature-side overlap"
           git push origin HEAD:integration/upstream-main-multiplayer
