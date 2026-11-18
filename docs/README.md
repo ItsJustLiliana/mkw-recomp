@@ -1,6 +1,6 @@
 # docs
 
-| File | What it is |
+| Folder | What it holds |
 |---|---|
 | [multiplayer.md](multiplayer.md) | VPN prototype setup on Windows, existing server work, limitations and the two-PC race acceptance test |
 | [research.md](research.md) | Initial research: the executable, Switch 2 hardware, every source used with its license, NVN2 against NVN1, shaders |

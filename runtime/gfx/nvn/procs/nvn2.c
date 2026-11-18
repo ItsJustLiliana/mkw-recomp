@@ -283,7 +283,9 @@ NVN2_IGNORED(nvnCommandBufferPopDebugGroupCompute)
 NVN2_IGNORED(nvnCommandBufferInsertDebugMarkerGraphics)
 NVN2_IGNORED(nvnCommandBufferInsertDebugMarkerCompute)
 // New in 1.8.0's sdk (tools/gpu/gen_nvn2_procs.py): scheduling hints for the console's GPU, nothing a Vulkan queue
-// takes. The other procs new there keep their weak stub, which stops with the proc's name if the game calls it.
+// takes. The other procs new there keep their weak stub, which stops with the proc's name if the game calls it. None
+// is called: 1.8.0's proc loader (main+0xdd0da0) stores each pointer through a GOT slot, and no other function of
+// main reads the slot of a new proc, these three included (q.py refs, 16/11/2026); subsdk0/1 load no NVN procs.
 NVN2_IGNORED(nvnCommandBufferSetGraphicsWorkloadPriority)
 NVN2_IGNORED(nvnCommandBufferSetComputeWorkloadPriority)
 NVN2_IGNORED(nvnCommandBufferSetResourceOccupancy)
@@ -414,19 +416,8 @@ NVN_API(nvnCommandBufferMultiDrawMeshTasks3DIndirect) { (void)c; mesh_skipped("M
 NVN_API(nvnCommandBufferMultiDrawMeshTasksIndirectCount) { (void)c; mesh_skipped("MultiDrawMeshTasksIndirectCount"); }
 NVN_API(nvnCommandBufferMultiDrawMeshTasks3DIndirectCount) { (void)c; mesh_skipped("MultiDrawMeshTasks3DIndirectCount"); }
 
-// ---------- Push constants: void nvnCommandBufferPush{Graphics,Compute}Constants[Deferred](NVNcommandBuffer *cmd,
-// int stage, int offset, int size, const void *data) as the driver reads them (sdk+0x5d34b0: stage & 7, offset in
-// bits 8-15, size clamped to 256 bytes) into Maxwell-3D method 0x141 (byte 0x504). No source says which constant bank
-// the shaders see them in; eden-nx2 does not model the method either and runs MKW, so they are dropped for now.
-static void push_dropped(Cpu *c, const char *name) {
-    static volatile int32_t seen;
-    if (plat_inc32(&seen) <= 8)
-        rt_log("nvn2: %s stage %d offset %d size %d dropped", name, (int)arg_x(c, 1), (int)arg_x(c, 2), (int)arg_x(c, 3));
-}
-NVN_API(nvnCommandBufferPushGraphicsConstants) { push_dropped(c, "PushGraphicsConstants"); }
-NVN_API(nvnCommandBufferPushGraphicsConstantsDeferred) { push_dropped(c, "PushGraphicsConstantsDeferred"); }
-NVN_API(nvnCommandBufferPushComputeConstants) { push_dropped(c, "PushComputeConstants"); }
-NVN_API(nvnCommandBufferPushComputeConstantsDeferred) { push_dropped(c, "PushComputeConstantsDeferred"); }
+// nvnCommandBufferPush{Graphics,Compute}Constants[Deferred] are recorded in nvn_api_cmd.c (OP_PUSH_CONST): the
+// shaders read them as constant bank c24 (translated reflections with slot 24; 5 programs in 1.8.0).
 
 // ---------- The rest of the procs MKW's code reads (tools/gpu/nvn_usage.py) that the totk-pc-recomp front lacked. Signatures
 // from nvn.h (NVN1) unless noted.

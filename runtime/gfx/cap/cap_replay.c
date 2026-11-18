@@ -50,8 +50,9 @@ static const tex_t *pin(const tex_t *t) {
 static void save_png(const GfxBackend *b, const tex_t *t, const char *path) {
     int fmt = t->d.format;
     int bgra = fmt == NVN_FORMAT_BGRA8 || fmt == NVN_FORMAT_BGRA8_SRGB;
-    if (!bgra && fmt != NVN_FORMAT_RGBA8 && fmt != NVN_FORMAT_RGBA8_SRGB) {
-        rt_log("cap: present of NVN format %#x not saved (8-bit RGBA and BGRA only)", fmt);
+    int rgb10 = fmt == NVN_FORMAT_RGB10A2;
+    if (!bgra && !rgb10 && fmt != NVN_FORMAT_RGBA8 && fmt != NVN_FORMAT_RGBA8_SRGB) {
+        rt_log("cap: present of NVN format %#x not saved (8-bit RGBA, BGRA and RGB10A2 only)", fmt);
         return;
     }
     uint32_t w = t->d.width, h = t->d.height;
@@ -62,7 +63,14 @@ static void save_png(const GfxBackend *b, const tex_t *t, const char *path) {
     NVNcopyRegion r = {.width = (int)w, .height = (int)h, .depth = 1};
     b->finish();
     b->read_texels(t, &view, &r, px, 4ull * w, 4ull * w * h);
-    if (bgra)
+    if (rgb10)
+        // Game 1.8.0 presents RGB10A2 (A2B10G10R10, R in the low bits); PNG is 8-bit, so each channel keeps its top 8.
+        for (uint64_t i = 0; i < 4ull * w * h; i += 4) {
+            uint32_t v;
+            memcpy(&v, px + i, 4);
+            px[i] = (v >> 2) & 0xff, px[i + 1] = (v >> 12) & 0xff, px[i + 2] = (v >> 22) & 0xff;
+        }
+    else if (bgra)
         for (uint64_t i = 0; i < 4ull * w * h; i += 4) {
             uint8_t x = px[i];
             px[i] = px[i + 2], px[i + 2] = x;
@@ -89,11 +97,20 @@ int cap_replay_main(int argc, char **argv) {
         else if (i + 1 < argc && !strcmp(argv[i], "--tag")) tag = argv[++i];
         else return usage();
     }
+    // MKW_REPLAY_PREWARM=1 (diagnosis): the boot's prewarm first (pipeline-pairs.bin, pipeline-keys.bin), to count
+    // the draws that still find shader libraries missing (the "gpl:" line at the end). The prewarm only runs with the
+    // background builds, so it makes MKW_PIPE_SYNC default to 0: with 1 it was skipped without a word (pw1, 18/11/2026).
+    const char *pw = getenv("MKW_REPLAY_PREWARM");
+    int prewarm = pw && strcmp(pw, "0");
     env_default("MKW_REPLAY_ASYNC", "0");
-    env_default("MKW_PIPE_SYNC", "1");
+    env_default("MKW_PIPE_SYNC", prewarm ? "0" : "1");
     env_default("MKW_REPLAY_PAR_WARM", "0");   // chunks from the first submission (vk_exec_par.c)
     env_default("MKW_BACKGROUND_WINDOW", "hidden");   // a replay shows no window: its images are read back
     vk_pipeline_async_enable();   // MKW_PIPE_SYNC=0: background builds and the draws' waits, as in the game
+    if (prewarm) {
+        if (strcmp(getenv("MKW_PIPE_SYNC"), "0")) rt_log("cap: MKW_REPLAY_PREWARM needs MKW_PIPE_SYNC=0: no prewarm");
+        else vk_pipeline_prewarm();
+    }
     const char *par = getenv("MKW_REPLAY_PAR");
     if (!tag) tag = par && strcmp(par, "0") ? "par" : "serial";
     char path[1024], out_default[1024];
@@ -128,12 +145,12 @@ int cap_replay_main(int argc, char **argv) {
     uint8_t *buf = NULL;
     // Time per record type, from its start to the next one's (reading and decompressing included): what a replay's
     // 7-22 s of state are made of.
-    uint64_t type_ns[CAP_SPARSE + 1] = {0}, type_n[CAP_SPARSE + 1] = {0}, t_rec = plat_now_ns();
-    uint32_t prev = 0;
+    uint64_t type_ns[CAP_LAST + 1] = {0}, type_n[CAP_LAST + 1] = {0}, t_rec = plat_now_ns();
+    uint32_t prev = 0, wimg_skipped = 0;
     for (int seen_submit = 0; cap_in_next(in, &h);) {
         uint64_t now = plat_now_ns();
         if (prev) type_ns[prev] += now - t_rec;
-        prev = h.type <= CAP_SPARSE ? h.type : 0, t_rec = now;
+        prev = h.type <= CAP_LAST ? h.type : 0, t_rec = now;
         if (prev) type_n[prev]++;
         if (h.size > bufcap) {
             bufcap = h.size;
@@ -220,7 +237,7 @@ int cap_replay_main(int argc, char **argv) {
                 cap_in_read(in, rec, hd[0]);
                 cap_in_read(in, offs, 4 * hd[1]);
                 // MKW_CAP_RECS=<dir> (a measurement): recordings over 64 KiB saved there as they are in the capture, to
-                // compare one frame's ops with the next (tools/analisis/recdiff.py).
+                // compare one frame's ops with the next (tools/analisis/nvn/recdiff.py).
                 const char *rd = cfg_get("MKW_CAP_RECS");
                 if (rd && hd[0] > (64u << 10)) {
                     char rp[1024];
@@ -315,6 +332,19 @@ int cap_replay_main(int argc, char **argv) {
             b->write_texels(&w.t, w.has_view ? &w.v : NULL, &w.r, buf, w.row, w.img);
             break;
         }
+        case CAP_WIMG: {
+            CapWimg w;
+            cap_in_read(in, &w, sizeof w);
+            cap_in_read(in, buf, w.bytes);
+            // The image here is made by this build's rules; with another ASTC setting or GPU than the capture's it has
+            // another format and stays as the back end leaves it (the texture then replays as its storage decodes).
+            if (!vk_texture_decoded_copy(&w.t, (VkFormat)w.format, w.level, w.layer, w.nlayers, buf, w.bytes, 1) &&
+                !wimg_skipped++)
+                rt_log("cap: a decoded ASTC image of the capture (%ux%u, VkFormat %u) has another format or size "
+                       "here (another MKW_ASTC_* setting or GPU): left as its storage decodes", w.t.d.width,
+                       w.t.d.height, w.format);
+            break;
+        }
         case CAP_GWRITTEN: {
             uint64_t a[2];
             cap_in_read(in, a, sizeof a);
@@ -351,11 +381,12 @@ int cap_replay_main(int argc, char **argv) {
     vk_mem_replay_log(presents);    // mirror and shadow traffic per presented frame (MKW_MEMORY=mirror)
     long errors = vk_validation_errors_total();
     vk_exec_par_log();   // how many submissions went in chunks: a replay that never chunks compares serial with serial
+    if (getenv("MKW_REPLAY_PREWARM") && strcmp(getenv("MKW_REPLAY_PREWARM"), "0")) vk_pipeline_save();   // its "gpl:" line
     static const char *const names[] = {"", "meta", "mem", "zero", "pool init", "pool fini", "mapv", "texreg", "sampreg",
                                         "texrel", "progrel", "submit", "present", "wtex", "gwritten", "finish", "frame",
-                                        "end", "gpumem", "sparse"};
+                                        "end", "gpumem", "sparse", "wimg"};
     char times[512] = "";
-    for (int t = 1, o = 0; t <= CAP_SPARSE && o < (int)sizeof times - 40; t++)
+    for (int t = 1, o = 0; t <= CAP_LAST && o < (int)sizeof times - 40; t++)
         if (type_ns[t] >= 100000000)   // 0.1 s or more
             o += snprintf(times + o, sizeof times - (size_t)o, " %s %.1f s (%llu)", names[t], (double)type_ns[t] / 1e9,
                           (unsigned long long)type_n[t]);
