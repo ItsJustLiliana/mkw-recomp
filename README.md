@@ -1,3 +1,7 @@
+I'm taking my own shot at creating multiplayer for the game, using only a friends list in the launcher and the rest happens ingame. By hosting my own servers/lobbies I try to make something like WheelWizard (for Mario Kart Wii) come to life.
+
+---
+
 <p align="center"><img src="docs/logo.svg" width="128" alt="mkw-recomp logo"></p>
 
 <h1 align="center">mkw-recomp</h1>
