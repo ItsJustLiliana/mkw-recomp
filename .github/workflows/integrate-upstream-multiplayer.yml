@@ -31,10 +31,23 @@ jobs:
           # Resolve overlapping text hunks in favor of the existing multiplayer implementation,
           # while bringing in all upstream-only changes. Never overwrite the feature branch.
           if ! git merge --no-commit --no-ff -X ours upstream/main; then
-            echo "::error::Merge has unresolved structural conflicts:"
-            git status --short
-            git diff --name-only --diff-filter=U
-            exit 1
+            # Upstream moved the legacy C test directory to tests/runtime.
+            # Preserve the source-side README and stage the new upstream paths;
+            # the merge has already combined any non-overlapping changes.
+            unresolved="$(git diff --name-only --diff-filter=U)"
+            expected="$(printf 'tests/c/README.md\\ntests/runtime/t_net_listen.c\\ntests/runtime/t_srv.c')"
+            if [ "$(printf '%s\\n' "$unresolved" | sort)" != "$(printf '%s\\n' "$expected" | sort)" ]; then
+              echo "::error::Unexpected merge conflicts:"
+              printf '%s\\n' "$unresolved"
+              git status --short
+              exit 1
+            fi
+            if grep -E -n '^(<<<<<<< |=======|>>>>>>> )' tests/runtime/t_net_listen.c tests/runtime/t_srv.c; then
+              echo "::error::Conflict markers in moved test sources"
+              exit 1
+            fi
+            git add tests/c/README.md tests/runtime/t_net_listen.c tests/runtime/t_srv.c
+            echo "Resolved the three directory-move conflicts; preserving the merged test files."
           fi
           if test -n "$(git diff --name-only --diff-filter=U)"; then
             echo "::error::Unresolved paths remain"
