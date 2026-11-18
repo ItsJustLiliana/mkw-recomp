@@ -8,6 +8,7 @@
 // type a friend code; before this page a player had no way to become friends with anyone from the port.
 #include <SDL3/SDL.h>
 #include <stdio.h>
+#include <stdlib.h>  // free() for the fetched CA buffer
 #include <string.h>
 
 #include "imgui.h"
