@@ -25,6 +25,7 @@ typedef struct {
     char credential[TOKEN_MAX];   // the member entry's credential, asked back by Gamesync IssueToken
     uint64_t seq;     // when they were matched into, created or joined it: a player's most recent session
     int streams;      // their Gamesync listen streams open on it
+    uint64_t reconnect_deadline_ms; // unexpected last-stream close: delay deferred departure for reconnection
 } SrvMember;
 
 typedef struct {
@@ -80,4 +81,6 @@ extern const SrvMethod SRV_CREATE_ROOM, SRV_TRACK_ROOM, SRV_JOIN, SRV_GET_SESSIO
 // srv_gamesync.c: a session's documents changed (s->docs.changed): sent to the streams listening (added: a member
 // joined, "added" rather than "modified"), then the participants queries waiting for everyone are checked again.
 void srv_gs_changed(SrvSession *s, int added);
+// Expire unexpected Gamesync stream closures after the reconnect grace period.
+void srv_gs_tick(SrvSession *s, uint64_t now_ms);
 extern const SrvMethod SRV_GS_ISSUE, SRV_GS_REFRESH, SRV_GS_GET, SRV_GS_WRITE, SRV_GS_LISTEN;
