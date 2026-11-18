@@ -33,6 +33,19 @@ initialization when `MKW_ONLINE=1`, while local-wireless station/access-point op
 avoids turning that setup call into error `2203-0022`; it does not implement wireless emulation or prove a race works.
 
 
+### Windows UDP trace during a race
+
+To distinguish an application-level 120-second timeout from packet loss, start **both** Windows clients from CMD with the optional host-side trace enabled:
+
+```cmd
+set MKW_NET_TRACE=1
+mkw.exe
+```
+
+Run this from the directory containing the Windows game executable (or replace `mkw.exe` with its full path). This environment variable is **not** an `mkw.ini` key. Each client's normal `logs/mkw.log` will include `net-udp: opened`, `bind`, `tx packets`, `rx packets` and nontransient socket errors, with no packet payloads logged. Packet counters are sampled on the first packet and each 256 packets. Compare whether reception continues on **both** machines immediately before `StartTimeoutCounter` and `AppErrorViewer`.
+
+A successful HTTP/2 Gamesync stream does not confirm that UDP/Pia gameplay traffic works. If one PC transmits but never receives, check direct P2P reachability and TURN allocation/port forwarding (UDP 3479 and 49152–49407) before changing the game's timeout. An isolated `EAGAIN` on a nonblocking socket is normal and intentionally not logged.
+
 ### Diagnosing a simultaneous mid-race disconnect
 
 On the Arch Linux host, record the session logs with timestamps immediately after a two-PC test:
