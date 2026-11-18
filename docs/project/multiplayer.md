@@ -32,6 +32,19 @@ The game's socket-backed Online flow also calls `nn::ldn::Initialize`; the runti
 initialization when `MKW_ONLINE=1`, while local-wireless station/access-point operations remain unavailable. This
 avoids turning that setup call into error `2203-0022`; it does not implement wireless emulation or prove a race works.
 
+
+### Diagnosing a simultaneous mid-race disconnect
+
+On the Arch Linux host, record the session logs with timestamps immediately after a two-PC test:
+
+```sh
+journalctl --user -u mkw-lobby.service -u mkw-relay.service --since '20 minutes ago' --no-pager > mkw-server-test.log
+```
+
+The lobby now logs Gamesync listener opens/closes (session, member, target count and remaining streams) and the HTTP/2 closure details (`h2_error`, `client_half_closed`, `server_done`). Compare these with the first in-game error and race state transition. A clean `KeepUserSession -> 0` **after** the error is not proof the server timed out the game.
+
+For the public server, re-run `tools/run/host_server.py` with its existing `--root`, `--lan-ip`, `--public-ip` and `--start` values after updating the executable; it now restarts already-active services to apply newly written relay configuration. **This interrupts active games**. Existing `turn_secret` is retained. Check `systemctl --user status mkw-lobby mkw-relay` after restarting. The old coturn `no-dtls` and `no-cli` flags were removed because the current coturn build warns about them. Do not publish the TURN secret from `server/settings.txt` or `turnserver.conf`.
+
 ## Shared public server on Linux
 
 The standalone server and coturn relay are separate processes. Build the lobby with

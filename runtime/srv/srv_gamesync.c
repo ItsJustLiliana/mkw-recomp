@@ -336,6 +336,10 @@ static void listen_msg(SrvCall *c, const uint8_t *msg, size_t len) {
             s->listeners++;
             SrvMember *m = srv_member(s, L->uid);
             if (m) m->streams++;
+            srv_log("gamesync listen open session=%s member=%s streams=%d listeners=%d",
+                    s->id, L->uid, m ? m->streams : 0, s->listeners);
+        } else {
+            srv_log("gamesync listen unbound (invalid or expired session token)");
         }
     }
     SrvSession *s = L->bound ? srv_session_find(L->session) : NULL;
@@ -516,6 +520,8 @@ static void listen_close(SrvCall *c) {
         if (s->listeners > 0) s->listeners--;
         SrvMember *m = srv_member(s, L->uid);
         if (m && m->streams > 0) m->streams--;
+        srv_log("gamesync listen close session=%s member=%s streams=%d listeners=%d targets=%d",
+                s->id, L->uid, m ? m->streams : 0, s->listeners, L->nt);
         s->changed_ms = srv_ms();   // the idle clock starts again when a listener goes
         // Deferred writes belong to the player, not a particular stream. Closing a
         // superseded/reconnecting KeepUserSession stream must not delete participation

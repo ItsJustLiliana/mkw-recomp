@@ -47,7 +47,7 @@ def main() -> None:
              f"relay-ip={args.lan_ip}", f"external-ip={args.public_ip}/{args.lan_ip}",
              "realm=mkw-recomp", "use-auth-secret", f"static-auth-secret={values['turn_secret']}",
              "min-port=49152", "max-port=49407", "total-quota=128", "user-quota=4", "relay-threads=1",
-             "no-tcp", "no-tcp-relay", "no-tls", "no-dtls", "no-cli", "no-multicast-peers", "log-file=stdout"]
+             "no-tcp", "no-tcp-relay", "no-tls", "no-multicast-peers", "log-file=stdout"]
     # The public relay must not provide UDP access to the server's private LAN or local applications.
     for block in ["0.0.0.0-0.255.255.255", "10.0.0.0-10.255.255.255", "100.64.0.0-100.127.255.255",
                   "127.0.0.0-127.255.255.255", "169.254.0.0-169.254.255.255", "172.16.0.0-172.31.255.255",
@@ -83,7 +83,10 @@ WantedBy=default.target
 """)
     if args.start:
         subprocess.run(["systemctl", "--user", "daemon-reload"], check=True)
-        subprocess.run(["systemctl", "--user", "enable", "--now", "mkw-relay.service", "mkw-lobby.service"], check=True)
+        # enable --now does not reload the config of an already-running service.
+        # Restart both so the new relay settings and server binary are actually used.
+        subprocess.run(["systemctl", "--user", "enable", "mkw-relay.service", "mkw-lobby.service"], check=True)
+        subprocess.run(["systemctl", "--user", "restart", "mkw-relay.service", "mkw-lobby.service"], check=True)
         subprocess.run(["systemctl", "--user", "is-active", "mkw-relay.service", "mkw-lobby.service"], check=True)
     print(f"Configured lobby {args.lan_ip}:{args.port}, friends API {args.port + 1}, relay UDP 3479/49152-49407.")
     print("The shared relay secret remains in owner-only files and was not printed.")
