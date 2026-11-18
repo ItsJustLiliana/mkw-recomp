@@ -35,10 +35,10 @@ jobs:
             # Preserve the source-side README and stage the new upstream paths;
             # the merge has already combined any non-overlapping changes.
             unresolved="$(git diff --name-only --diff-filter=U)"
-            expected="$(printf '%s\\n' tests/c/README.md tests/runtime/t_net_listen.c tests/runtime/t_srv.c)"
-            if [ "$(printf '%s\\n' "$unresolved" | sort)" != "$(printf '%s\\n' "$expected" | sort)" ]; then
+            expected="$(printf '%s\n' tests/c/README.md tests/runtime/t_net_listen.c tests/runtime/t_srv.c)"
+            if [ "$(printf '%s\n' "$unresolved" | sort)" != "$(printf '%s\n' "$expected" | sort)" ]; then
               echo "::error::Unexpected merge conflicts:"
-              printf '%s\\n' "$unresolved"
+              printf '%s\n' "$unresolved"
               git status --short
               exit 1
             fi
