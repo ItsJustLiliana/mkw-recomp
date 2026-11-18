@@ -450,6 +450,16 @@ static void redirect(struct sockaddr_in *h) {
 }
 
 static void ret_fail(Cpu *c, int e) {
+    // The game often shows only a generic "disconnected" screen. When diagnostics
+    // are enabled, preserve non-transient socket errors and the guest call site.
+    // Never log packet contents or credentials, and cap output during a bad network.
+    if (udp_trace() && e != G_EAGAIN && e != G_EINPROGRESS && e != G_EALREADY && e != G_EINTR) {
+        static volatile uint32_t errors;
+        uint32_t n = __atomic_add_fetch(&errors, 1, __ATOMIC_RELAXED);
+        if (n <= 32 || (n & 127u) == 0)
+            rt_log("net-socket: error=%d caller=%#llx occurrence=%u",
+                   e, (unsigned long long)c->x[30], n);
+    }
     set_errno(c, e);
     ret_x(c, (uint64_t)-1);
 }

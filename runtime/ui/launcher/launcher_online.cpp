@@ -442,6 +442,19 @@ void online_page(float scale, float bottom) {
         host_section(s);
         lan_section(s);
     }
+    // The launcher runs Play in a fresh process; these saved settings are read at game startup.
+    // No patches, ROMFS edits or manual game-code changes are needed to collect a race log.
+    if (ImGui::CollapsingHeader("Race connection diagnostics")) {
+        const char *trace = cfg_get("MKW_NET_TRACE");
+        bool enabled = trace && *trace && strcmp(trace, "0") != 0;
+        if (ImGui::Checkbox("Log race connection issues", &enabled)) {
+            cfg_set("MKW_NET_TRACE", enabled ? "1" : "0");
+            cfg_set("MKW_SEQ_WATCH", enabled ? "1" : "0");
+            cfg_save();
+        }
+        ImGui::TextWrapped("When enabled, the next Play records network socket failures, UDP traffic and game phase changes in the normal mkw.log. Turn this off after testing.");
+        ImGui::TextDisabled("No game files are changed. Restart through Play for the setting to take effect.");
+    }
     if (ImGui::CollapsingHeader(menu_text(UI_ONLINE_HOWTO))) {
         ImGui::TextWrapped("%s", menu_text(UI_ONLINE_HOWTO_TEXT));
         ImGui::Spacing();
