@@ -351,6 +351,21 @@ static int udp_trace(void) {
     const char *v = cfg_get("MKW_NET_TRACE");
     return v && *v && strcmp(v, "0") != 0;
 }
+
+// A slow/render-bound peer can leave network datagrams queued for several
+// frames. Winsock's small default UDP receive queue silently discards the
+// oldest packets when it fills, which looks like a Pia peer timeout rather
+// than a socket error. Reserve bounded headroom before binding/receiving.
+// Game-facing getsockopt still reports the option the guest explicitly set.
+#define P2P_UDP_RCVBUF  (512 * 1024)
+static int udp_recvbuf_wanted(int requested, int type) {
+#ifdef _WIN32
+    return type == 2 && requested < P2P_UDP_RCVBUF ? P2P_UDP_RCVBUF : requested;
+#else
+    (void)type;
+    return requested;
+#endif
+}
 static void udp_log_io(GFd *f, int fd, int tx, long n, int err) {
     if (!udp_trace() || !f || f->type != 2) return;
     if (n < 0) {
@@ -488,6 +503,11 @@ static void ov_socket(Cpu *c) {
         BOOL off = FALSE;
         DWORD got = 0;
         WSAIoctl(s, SIO_UDP_CONNRESET, &off, sizeof off, NULL, 0, &got, NULL, NULL);
+        // No per-packet buffering in the lifted game: allow short scheduling
+        // stalls (e.g. a slower GPU) without losing incoming race updates.
+        int size = P2P_UDP_RCVBUF;
+        if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&size, sizeof size) != 0 && udp_trace())
+            rt_log("net-udp: receive buffer request failed on fd=%d (host error=%d)", fd, WSAGetLastError());
     }
 #endif
     if (nonblock) host_nonblock(s, 1);
@@ -788,7 +808,14 @@ static void ov_setsockopt(Cpu *c) {
         case 0x8: r = setsockopt(f->s, SOL_SOCKET, SO_KEEPALIVE, (const char *)&iv, 4); break;
         case 0x20: r = setsockopt(f->s, SOL_SOCKET, SO_BROADCAST, (const char *)&iv, 4); break;
         case 0x1001: r = setsockopt(f->s, SOL_SOCKET, SO_SNDBUF, (const char *)&iv, 4); break;
-        case 0x1002: r = setsockopt(f->s, SOL_SOCKET, SO_RCVBUF, (const char *)&iv, 4); break;
+        case 0x1002: {
+            // Some game libraries shrink SO_RCVBUF after socket creation.
+            // Keep the minimum host queue while returning the guest's value
+            // through the stored option above for compatibility.
+            int host_size = udp_recvbuf_wanted(iv, f->type);
+            r = setsockopt(f->s, SOL_SOCKET, SO_RCVBUF, (const char *)&host_size, 4);
+            break;
+        }
         case 0x80: {   // linger {u32 on, u32 seconds}
             uint32_t lv[2] = {0, 0};
             memcpy(lv, v, len < 8 ? len : 8);
