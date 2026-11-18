@@ -33,6 +33,8 @@ def test_peer_selection(tmp_path: Path) -> None:
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+// The production Windows runtime maps POSIX-style reentrant tokenization to strtok_s.
+#define strtok_r strtok_s
 #else
 #include <arpa/inet.h>
 #include <netdb.h>
