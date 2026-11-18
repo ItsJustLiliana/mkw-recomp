@@ -1254,9 +1254,12 @@ static void setup_steps(const SetupState &st, bool ready, float act_h) {
     if (romfs_card("##link", L.link_romfs, UI_LAUNCH_ROMFS_LINK, UI_LAUNCH_ROMFS_LINK_NOTE, cw)) L.link_romfs = 1;
     step_end();
     step_head(3, false, menu_text(UI_LAUNCH_SETUP));
-    ImGui::BeginDisabled(!L.source[0]);
+    // An existing installation has a saved setup source and RomFS mode. It
+    // must be possible to repair it even when the picker starts out empty.
+    ImGui::BeginDisabled(!ready && !L.source[0]);
     if (accent_button(menu_text(ready ? UI_LAUNCH_SETUP_AGAIN : UI_LAUNCH_SETUP), ImVec2(0, act_h)))
-        setup_start(L.exe_dir, cfg_game_dir(), L.source, L.link_romfs);
+        setup_start(L.exe_dir, cfg_game_dir(), L.source[0] ? L.source : nullptr,
+                    L.source[0] ? L.link_romfs : -1);
     ImGui::EndDisabled();
     char to[PLAT_PATH_MAX + 64];
     snprintf(to, sizeof to, menu_text(UI_LAUNCH_INSTALLS_TO), cfg_game_dir());
@@ -1303,6 +1306,15 @@ static void files_summary(const SetupState &st, float act_h) {
     if (ImGui::Button(menu_text(UI_LAUNCH_OPEN_FOLDER), ImVec2(0, act_h))) plat_open_folder(cfg_game_dir());
     ImGui::SameLine();
     game_dir_button(st, act_h);
+    // A visible repair action even when the optional setup panel is collapsed
+    // or the old source location is not currently selected in the picker.
+    if (L.tools) {
+        ImGui::SameLine();
+        ImGui::BeginDisabled(st.running);
+        if (ImGui::Button(menu_text(UI_LAUNCH_SETUP_AGAIN), ImVec2(0, act_h)))
+            setup_start(L.exe_dir, cfg_game_dir(), nullptr, -1);
+        ImGui::EndDisabled();
+    }
     game_dir_notes();
     card_end(LOOK_LINE, LOOK_ROW);
 }
