@@ -901,10 +901,15 @@ void srv_session_tick(uint64_t now) {
             if (tickets[i].used && tickets[i].state == T_SEARCHING && !srv_uid_online(tickets[i].uid))
                 tickets[i].state = T_CANCELLED;
     }
+    // matcher() can create or update a session after 'now' was sampled.
+    // Since these are unsigned clocks, subtracting a future changed_ms wraps
+    // and used to drop brand-new sessions as "idle" in the very same tick.
     for (int i = nsessions - 1; i >= 0; i--)
-        if (!sessions[i]->listeners && now - sessions[i]->changed_ms >= IDLE_MS) session_drop(i);
+        if (!sessions[i]->listeners && now >= sessions[i]->changed_ms &&
+            now - sessions[i]->changed_ms >= IDLE_MS) session_drop(i);
     for (int i = 0; i < TICKETS_MAX; i++)
-        if (tickets[i].used && final_state(tickets[i].state) && now - tickets[i].created_ms >= FINAL_KEEP_MS &&
+        if (tickets[i].used && final_state(tickets[i].state) && now >= tickets[i].created_ms &&
+            now - tickets[i].created_ms >= FINAL_KEEP_MS &&
             !srv_session_find(tickets[i].session))
             ticket_free(&tickets[i]);
     for (int i = 0; i < nsessions; i++) {   // races whose players all wait: nobody writes to close them
