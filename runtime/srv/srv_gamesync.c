@@ -517,9 +517,13 @@ static void listen_close(SrvCall *c) {
         SrvMember *m = srv_member(s, L->uid);
         if (m && m->streams > 0) m->streams--;
         s->changed_ms = srv_ms();   // the idle clock starts again when a listener goes
-        run_deferments(s, L->uid);
-        m = srv_member(s, L->uid);
-        if (m && !m->streams) srv_session_leave(s, L->uid);   // rooms only: matchmade members stay
+        // Deferred writes belong to the player, not a particular stream. Closing a
+        // superseded/reconnecting KeepUserSession stream must not delete participation
+        // while another stream is still listening for this player.
+        if (m && !m->streams) {
+            run_deferments(s, L->uid);
+            srv_session_leave(s, L->uid);   // rooms only: matchmade members stay
+        }
     }
     for (int k = 0; k < L->nt; k++) target_free(&L->t[k]);
     free(L);
