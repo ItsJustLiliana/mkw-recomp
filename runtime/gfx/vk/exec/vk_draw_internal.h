@@ -23,6 +23,7 @@
 
 #define ZERO_BYTES 65536u
 #define SUPPORT_BYTES 1408u   // Ryujinx SupportBuffer (std140): alpha_test, is_bgra[8], viewport_inverse, viewport_size, ...
+#define SUP_IN 4               // support_in: viewport width, height, point size, alpha test reference
 #define NVN_STAGE_VS 0
 #define NVN_STAGE_FS 1
 #define NVN_STAGE_CS 5
@@ -47,7 +48,7 @@ typedef struct {
     uint64_t vgen;
     int vb_valid;
     uint8_t support[SUPPORT_BYTES];      // last support buffer and where it lives
-    float sup_in[3];                     // the support_fill arguments it was filled from
+    float sup_in[SUP_IN];                // the support_fill arguments it was filled from
     VkBuffer sup_buf;
     VkDeviceSize sup_off;
     int sup_valid;
@@ -55,7 +56,11 @@ typedef struct {
     VkBuffer c0_buf[3];
     VkDeviceSize c0_off[3];
     int c0_valid[3];
-    struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst; uint8_t table[5]; uint64_t tex[128], img[32]; } c0_in[3];   // what vk_c0_fill read for c0[k]
+    struct { p_bind_buf ssbo[16], ubo[16]; uint32_t dim[3], binst; uint8_t table[5]; uint64_t tex[128], img[32]; uint8_t pc[NVN_C24_BYTES]; } c0_in[3];   // what vk_c0_fill read for c0[k]
+    uint8_t c24[3][NVN_C24_BYTES];       // last push-constant bank c24 per stage and where it lives (c24_info)
+    VkBuffer c24_buf[3];
+    VkDeviceSize c24_off[3];
+    int c24_valid[3];
     VkPipelineLayout ds_layout;          // graphics layout the sets below were last pushed or bound with
     VkDescriptorSet ds_bound[2];         // allocated set bound per set number (0: none or pushed since)
     VkDescriptorSet ds_last[2];          // last allocated and written set per set number, contents in DS

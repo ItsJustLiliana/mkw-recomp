@@ -57,7 +57,7 @@ typedef enum {
     UI_MENU_TURBO_SPEED_DESC, UI_MENU_SKIP_MOVIES, UI_MENU_SKIP_MOVIES_DESC, UI_MENU_SEED, UI_MENU_SEED_DESC,
     UI_MENU_UNLOCK_ALL, UI_MENU_UNLOCK_ALL_DESC, UI_MENU_QUICK_RACE, UI_MENU_QUICK_RACE_DESC, UI_MENU_QUICK_RACE_TT,
     UI_MENU_QUICK_RACE_GP, UI_MENU_QUICK_RACE_FREE, UI_MENU_FREEZE_KEYS, UI_MENU_FREEZE_KEYS_DESC,
-    UI_MENU_CLASSIC_GP, UI_MENU_CLASSIC_GP_DESC,
+    UI_MENU_CLASSIC_GP, UI_MENU_CLASSIC_GP_DESC, UI_MENU_CLASSIC_VS, UI_MENU_CLASSIC_VS_DESC,
 
     // Game
     UI_MENU_GAME_LANG, UI_MENU_GAME_LANG_DESC, UI_MENU_GAME_LANG_AUTO,
@@ -79,8 +79,11 @@ typedef enum {
     UI_MENU_MOUSE_SENS, UI_MENU_MOUSE_SENS_DESC,
     UI_MENU_STICK_DEADZONE, UI_MENU_STICK_DEADZONE_DESC,
     UI_MENU_SWITCH2, UI_MENU_SWITCH2_DESC,
+    UI_MENU_DSU, UI_MENU_DSU_DESC,   // Cemuhook / DSU motion (input/dsu.c)
     UI_MENU_BUTTON_ICONS, UI_MENU_BUTTON_ICONS_DESC, UI_MENU_ICONS_NINTENDO, UI_MENU_ICONS_XBOX,
     UI_MENU_ICONS_PLAYSTATION, UI_MENU_ICONS_KEYBOARD, UI_MENU_ICONS_IN_USE,   // "in use: %s"
+    UI_MENU_MENU_SHORTCUT, UI_MENU_MENU_SHORTCUT_DESC, UI_MENU_SHORTCUT_MINUS_PLUS, UI_MENU_SHORTCUT_GUIDE,
+    UI_MENU_SHORTCUT_STEAM_NOTE,
 
     // Controls tab: the remapping rows (ui/menu/binds_page.cpp)
     UI_BINDS_HELP, UI_BINDS_COL_KEY1, UI_BINDS_COL_KEY2, UI_BINDS_COL_PAD,
@@ -91,6 +94,13 @@ typedef enum {
     UI_BINDS_TAKEN,           // "%s was taken from %s": the key, the action that lost it
     UI_BINDS_SWAPPED,         // "%s swapped with %s": the two actions
     UI_NOTICE_PADS_MISSING,   // "%d players need a controller each: %d connected" (ov_input.c, controller applet)
+    // Controller batteries (input/input_power.c): the Controls tab's rows, the start screen and the low battery notice
+    UI_MENU_PADS,             // group heading over the players' rows
+    UI_MENU_PAD_PLAYER,       // "Player %d: %s": the player and the controller's name
+    UI_MENU_PAD_BATTERY_DESC, UI_MENU_PADS_NONE,
+    UI_POWER_LOW, UI_POWER_MEDIUM, UI_POWER_HIGH,   // a coarse band: a Switch 2 controller's voltage over Bluetooth, an Xbox pad's sysfs level on xone
+    UI_POWER_CHARGING, UI_POWER_CHARGED, UI_POWER_WIRED, UI_POWER_UNKNOWN,
+    UI_NOTICE_BATTERY_LOW,    // "Player %d's controller is running out of battery (%s)"
     UI_BINDS_RESET, UI_BINDS_RESET_DESC,
     // the actions, in action order (input_map.h B_A .. B_SR_DOWN)
     UI_BIND_A, UI_BIND_B, UI_BIND_X, UI_BIND_Y, UI_BIND_LCLICK, UI_BIND_RCLICK, UI_BIND_L, UI_BIND_R, UI_BIND_ZL,
@@ -213,6 +223,9 @@ typedef enum {
     UI_LAUNCH_UPDATE_FETCHING, UI_LAUNCH_UPDATE_FAILED, UI_LAUNCH_UPDATED,
     // the update card (TITLE: the release; DETAIL: the version in use and the download's MB) and the main page's rows
     UI_LAUNCH_UPDATE_TITLE, UI_LAUNCH_UPDATE_DETAIL, UI_LAUNCH_UPDATE_NOW, UI_LAUNCH_WHATS_NEW, UI_LAUNCH_RETRY,
+    // the update set up beside the version played: PREPARING "... %s ..." (tag), PREPARED "%s ..." (tag), RESTART the
+    // button, PREPARE_FAILED "... %s ..." (why; the new version's start sets it up instead)
+    UI_LAUNCH_UPDATE_PREPARING, UI_LAUNCH_UPDATE_PREPARED, UI_LAUNCH_UPDATE_RESTART, UI_LAUNCH_UPDATE_PREPARE_FAILED,
     UI_LAUNCH_FILES_READY_AS, UI_LAUNCH_PAD, UI_LAUNCH_PAD_NONE, UI_LAUNCH_CONFIGURE, UI_LAUNCH_SHORTCUT_ASK,
     UI_LAUNCH_SHORTCUT_MAKE, UI_LAUNCH_NOT_NOW, UI_LAUNCH_KEYS,
     UI_LAUNCH_SETTINGS_NOTE,   // beside the Settings title: changes save at once and apply when the game starts

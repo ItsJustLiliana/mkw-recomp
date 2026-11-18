@@ -148,7 +148,13 @@ static int c0_on(void) {   // MKW_FIX_C0=0: c0 reads zeros instead of the driver
     return on;
 }
 
+static int c24_on(void);
+
 // c0 from replay scratch; a bank equal to the stage's previous one reuses its range, so it costs no copy.
+// An NVN2 compute program reads its pushed constants in c0 from byte 0x10, as many words as its control section says
+// (+0xa9, gfx_shader.c cs_res), before its resource table: there they go (OP_PUSH_CONST of stage NVN_STAGE_CS). The
+// photo mode's 1.5x scale of the picture to 3840x2160 (cs 07a03741f7478a83) clamps and offsets its reads by them;
+// with zeros it wrote black and photo mode showed a black screen (issue #384; ph8, 1440 lines, 16/11/2026).
 static VkDescriptorBufferInfo c0_info(VkExec *ex, int st) {
     int k = st == NVN_STAGE_VS ? 0 : st == NVN_STAGE_FS ? 1 : 2;
     // vk_c0_fill reads the storage slots, and the uniform slots and dispatch size for compute or the base instance for
@@ -162,6 +168,7 @@ static VkDescriptorBufferInfo c0_info(VkExec *ex, int st) {
         if ((table = gfx_shader_cs_table(c0_cs))) {   // NVN2 packed table: its handles are part of the bank
             memcpy(in.table, table, 5);
             memcpy(in.tex, ex->tex[st], sizeof in.tex), memcpy(in.img, ex->img[st], sizeof in.img);
+            if (c24_on()) memcpy(in.pc, ex->c24[st], sizeof in.pc);
         }
     } else {
         in.binst = c0_binst;
@@ -171,12 +178,35 @@ static VkDescriptorBufferInfo c0_info(VkExec *ex, int st) {
     B.c0_in[k] = in;
     uint8_t tmp[VK_C0_BYTES];
     vk_c0_fill(tmp, st, ex->ssbo[st], ex->ubo[st], c0_dim, c0_binst, table, ex->tex[st], ex->img[st]);
+    if (table) {   // the pushed constants, before the table vk_c0_fill wrote past them
+        uint32_t n = 4u * table[4];
+        if (n > NVN_C24_BYTES) n = NVN_C24_BYTES;
+        if (0x10 + n <= VK_C0_BYTES) memcpy(tmp + 0x10, in.pc, n);
+    }
     if (!B.c0_valid[k] || memcmp(tmp, B.c0[k], VK_C0_BYTES)) {
         memcpy(scratch(ex, VK_C0_BYTES, &B.c0_buf[k], &B.c0_off[k]), tmp, VK_C0_BYTES);
         memcpy(B.c0[k], tmp, VK_C0_BYTES);
         B.c0_valid[k] = 1;
     }
     return (VkDescriptorBufferInfo){B.c0_buf[k], B.c0_off[k], VK_C0_BYTES};
+}
+
+static int c24_on(void) {   // MKW_PUSH_CONST=0: c24 reads zeros, as before the push constants were passed
+    static int on = -1;
+    if (on < 0) on = rt_knob("PUSH_CONST", "1");
+    return RT_KNOB_ON(on);
+}
+
+// The push-constant bank c24 (OP_PUSH_CONST) from replay scratch; a bank equal to the stage's previous one reuses its
+// range. The shaders declare the bank at its full 64 KiB: reads past these 256 bytes return zero (robustBufferAccess).
+static VkDescriptorBufferInfo c24_info(VkExec *ex, int st) {
+    int k = st == NVN_STAGE_VS ? 0 : st == NVN_STAGE_FS ? 1 : 2;
+    if (!B.c24_valid[k] || memcmp(ex->c24[st], B.c24[k], NVN_C24_BYTES)) {
+        memcpy(scratch(ex, NVN_C24_BYTES, &B.c24_buf[k], &B.c24_off[k]), ex->c24[st], NVN_C24_BYTES);
+        memcpy(B.c24[k], ex->c24[st], NVN_C24_BYTES);
+        B.c24_valid[k] = 1;
+    }
+    return (VkDescriptorBufferInfo){B.c24_buf[k], B.c24_off[k], NVN_C24_BYTES};
 }
 
 // The buffer range limits, read once: the device's properties are a cold cache line on every binding of every draw.
@@ -209,6 +239,8 @@ static VkDescriptorBufferInfo ubo_info(VkExec *ex, int st, int slot) {
                 bind_range(ex, (uint64_t)(uintptr_t)code + c1, c1_size, align, max, VK_MUSE_UBO, 0, &bi))
                 return bi;
         }
+    } else if (slot == 24 && c24_on()) {
+        return ubo_kind = RUK_C24, c24_info(ex, st);
     } else if (slot >= 3 && slot - 3 < 18) {
         const p_bind_buf *b = &ex->ubo[st][slot - 3];
         if (b->size && vk_usnap_find(b->addr, b->size < max ? b->size : max, align, &bi)) {   // as of the submit call
@@ -372,22 +404,26 @@ static void tex_info(VkExec *ex, const GfxShaderRes *r, uint64_t h, int storage,
                       .separate = (uint8_t)separate, .valid = 1, .image = image, .out = *out};
 }
 
-static void support_in(const VkExec *ex, float in[3]) {   // what support_fill reads: viewport size, point size
+// What support_fill reads: viewport size, point size and the alpha test's reference (0 with the test off, so a
+// reference the game sets for no test makes no new buffer).
+static void support_in(const VkExec *ex, float in[SUP_IN]) {
     in[0] = ex->in_pass && ex->has_vp ? ex->vp[0][2] : (float)ex->pass_w;
     in[1] = ex->in_pass && ex->has_vp ? ex->vp[0][3] : (float)ex->pass_h;
     in[2] = ex->point_size > 0 ? ex->point_size : 1.0f;
+    int at = ex->pipe.color.alpha_func && ex->pipe.color.alpha_func != NVN_ALPHA_FUNC_ALWAYS;
+    in[3] = at ? ex->alpha_ref : 0;
 }
 
-static void support_fill(uint8_t *b, float w, float h, float point_size);
+static void support_fill(uint8_t *b, const float in[SUP_IN]);
 
 // The support buffer for the bound viewport and point size: the last one of this command buffer when its inputs or
 // contents are the same, else a new one in scratch.
 static VkDescriptorBufferInfo support_info(VkExec *ex) {
-    float in[3];
+    float in[SUP_IN];
     support_in(ex, in);
     if (!B.sup_valid || memcmp(in, B.sup_in, sizeof in)) {   // support_fill reads only these
         uint8_t tmp[SUPPORT_BYTES];
-        support_fill(tmp, in[0], in[1], in[2]);
+        support_fill(tmp, in);
         memcpy(B.sup_in, in, sizeof in);
         if (!B.sup_valid || memcmp(tmp, B.support, SUPPORT_BYTES)) {   // a new buffer only when the contents changed
             VkBuffer sb;
@@ -400,8 +436,11 @@ static VkDescriptorBufferInfo support_info(VkExec *ex) {
     return (VkDescriptorBufferInfo){B.sup_buf, B.sup_off, SUPPORT_BYTES};
 }
 
-static void support_fill(uint8_t *b, float w, float h, float point_size) {
+// The alpha test's reference goes in the first float, Ryujinx's FragmentAlphaTest slot (spirv_alpha_test reads it).
+static void support_fill(uint8_t *b, const float in[SUP_IN]) {
+    float w = in[0], h = in[1], point_size = in[2];
     memset(b, 0, SUPPORT_BYTES);
+    memcpy(b, &in[3], 4);
     float inv[4] = {w > 0 ? 2.0f / w : 0, h > 0 ? 2.0f / h : 0, 0, 0}, size[4] = {w, h, 0, 0};
     memcpy(b + 144, inv, 16);
     memcpy(b + 160, size, 16);
@@ -506,6 +545,7 @@ static const RsList *rs_list(const VkExec *ex, const VkPipeInfo *info) {
                 for (uint32_t k = 0; k < cnt; k++) {
                     int slot = r->slot + (int)k;
                     if (slot == 0 && c0_on()) c0 = 1, rs_add(tmp, &n, ex, ex->ssbo[st], sizeof ex->ssbo[st]);
+                    else if (slot == 24 && c24_on()) rs_add(tmp, &n, ex, ex->c24[st], NVN_C24_BYTES);
                     else if (slot >= 3 && slot - 3 < 18) rs_add_k(tmp, &n, ex, &ex->ubo[st][slot - 3], sizeof(p_bind_buf), 1);
                 }   // slot 1: the program (bind_sig); others: the zero buffer
             } else if (b->kind == GFX_RES_SSBO) {   // every descriptor of the binding is the same range
@@ -560,13 +600,12 @@ static int bind_sig(const VkExec *ex, const VkPipeInfo *info) {
     PUT(vk_mem_gen() + vk_usnap_gen());   // both only grow
     for (int i = 0; i < ex->nfbl && i < 9; i++) PUT((uintptr_t)ex->fbl_img[i]);
     if (l->sup) {
-        float in[3];
+        float in[SUP_IN];
         support_in(ex, in);
-        uint64_t a;
-        uint32_t ps;
-        memcpy(&a, in, 8), memcpy(&ps, &in[2], 4);
+        uint64_t a, b;
+        memcpy(&a, in, 8), memcpy(&b, &in[2], 8);
         PUT(a);
-        PUT(ps);
+        PUT(b);
     }
     if (l->c0) PUT(c0_binst);
     for (int i = 0; i < l->np; i++) PUT(ubo_ptr(ex, l->p[i].st, l->p[i].res));
@@ -1073,6 +1112,7 @@ int ru_bind_set(VkExec *ex, const VkPipeInfo *info, uint32_t s, VkDescSlot *ds, 
     for (uint32_t j = 0; j < n; j++) {
         switch (kind[j]) {
         case RUK_C0: c0_binst = c0_binst_, ds[j].buffer = c0_info(ex, kst[j]); break;
+        case RUK_C24: ds[j].buffer = c24_info(ex, kst[j]); break;
         case RUK_SUP: ds[j].buffer = support_info(ex); break;
         case RUK_UBO: {
             const p_bind_buf *b = &ex->ubo[kst[j]][kslot[j]];

@@ -73,7 +73,7 @@ typedef struct VkExec {
     p_poly_offset poly_offset;           // OP_POLY_OFFSET: depth bias factor, units, clamp
     p_prim_restart prim_restart;         // OP_PRIM_RESTART: applied to indexed strip and fan draws (op_draw_idx)
     float blend_color[4];                // OP_BLEND_COLOR
-    float alpha_ref;                     // OP_ALPHA_REF: copied into the draw's VkPipeState when its alpha test is on
+    float alpha_ref;                     // OP_ALPHA_REF: the support buffer's first float when the alpha test is on
     int64_t copy_stride;                 // OP_COPY_STRIDE: row stride of buffer <-> texture copies (vk_exec_xfer.c)
     const dpool_t *tex_pool, *samp_pool; // OP_SET_TEX_POOL, OP_SET_SAMP_POOL
     // Pipeline inputs. vk_exec.c writes depth_clamp (OP_DEPTH_CLAMP), raster_discard (OP_RASTER_DISCARD) and, at pass
@@ -87,6 +87,7 @@ typedef struct VkExec {
     NVNbufferRange vbuf[16];             // OP_BIND_VBUF
     p_bind_buf ubo[NVN_BIND_STAGES][18], ssbo[NVN_BIND_STAGES][16];   // OP_BIND_UBO / OP_BIND_SSBO per stage and index
     uint64_t tex[NVN_BIND_STAGES][128], samp[NVN_BIND_STAGES][128], img[NVN_BIND_STAGES][32];   // OP_BIND_TEX / OP_BIND_SAMP / OP_BIND_IMG handles per stage
+    uint8_t c24[NVN_BIND_STAGES][NVN_C24_BYTES];   // OP_PUSH_CONST: the driver's push-constant bank c24 per stage; never pushed reads zero
 
     // ---- vk_exec_xfer.c slots (render enable, conditional rendering): left empty by vk_exec.c
     int render_disabled;                 // OP_RENDER_ENABLE false or a failed OP_RENDER_COND: clears and draws skip

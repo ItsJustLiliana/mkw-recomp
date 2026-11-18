@@ -10,7 +10,9 @@ mismatch stops.
 Layout of build/dist/<target>/ (after build.py --dist):
     mkw, mkwgame.id                 the runtime (mkw.exe and its DLLs on Windows; mkwgame.* comes from the setup)
     setup/python, setup/zig, setup/glslc
+    setup/clang/                    (Linux x86-64, Windows) LLVM's own clang of zig's version: llvm_clang.py
     setup/src/                      recomp/, sm86/, tools/{build,prepare,romfs,shaders}, runtime/{cpu,core/boot/gamelib.h}
+    setup/src/FILES                 the list of those files: the only ones prepare.py's keys count
     setup/lib/libmkw.dll.a          (Windows) the runtime's import library the game code library links against
     setup/lib/crt/                  (Windows) zig's C runtime for the target, prebuilt, and link.json: windows_crt()
 The desktop shortcut is the start screen's (a .desktop on Linux, a .lnk on Windows: platform.h).
@@ -33,6 +35,8 @@ import tempfile
 import urllib.request
 import zipfile
 from pathlib import Path
+
+import llvm_clang
 
 ROOT = Path(__file__).resolve().parents[2]
 DL = ROOT / "build/dist/dl"
@@ -106,12 +110,14 @@ PINS = {
                          "8dfbfd68ebf53249d11e528cbb80ad5a2460b0c5b4636eed82ee0d3950827a3d"),
     },
 }  # fmt: skip
-# The sources the setup runs, from the repository (tools/prepare/prepare.py imports and runs them).
-# tools/mod: the Mods page's import, merge, GameBanana and .ips tools (the launcher runs them; tests/test_setup.py checks
+# The sources the setup runs, from the repository (tools/prepare/prepare.py imports and runs them; tools/prepare/
+# steam.py draws Steam's library images with tools/build/icon.py).
+# tools/mod: the Mods page's import, merge, GameBanana and .ips tools (the launcher runs them; tests/launcher/test_setup.py checks
 # every tool it names is here: until 13/11/2026 none was, and the page failed with "no setup tools" in every package)
-SOURCES = ["recomp", "sm86", "tools/build/build.py", "tools/prepare", "tools/mod", "tools/romfs/resolution.py",
+SOURCES = ["recomp", "sm86", "tools/build/build.py", "tools/build/icon.py", "tools/prepare", "tools/mod", "tools/romfs/resolution.py",
            "tools/i18n/catalog.py", "tools/i18n/game_texts.py", "i18n/game",
            "tools/shaders/extract.py", "tools/shaders/translate.py", "tools/shaders/shaderc_lib.py",
+           "tools/shaders/pipeline_pairs.py", "tools/shaders/pack.py",
            "runtime/cpu",
            "runtime/core/boot/gamelib.h",
            "tools/github/signatures.toml"]  # fmt: skip  (the known errors tools/prepare/lastrun.py names)
@@ -238,6 +244,9 @@ def copy_sources(src_root: Path) -> None:
             shutil.copytree(s, d, ignore=skip)
         else:
             shutil.copy2(s, d)
+    # what prepare.py's keys count (shaderstep.shipped): files left by an older package unzipped over this one do not
+    files = sorted(p.relative_to(src_root).as_posix() for p in src_root.rglob("*") if p.is_file())
+    (src_root / "FILES").write_text("".join(f"{f}\n" for f in files), encoding="utf-8")
 
 
 def main() -> None:
@@ -265,6 +274,11 @@ def main() -> None:
     for wheel in ("numpy", "lz4"):
         unpack_wheel(got[wheel], site)
     unpack_top(got["zig"], setup / "zig")
+    if args.target in llvm_clang.PINS:
+        # the game code's chunks ~30 % faster than on zig's LLVM (tools/prepare/fastcc.py)
+        (setup / "clang").mkdir(exist_ok=True)
+        cl = llvm_clang.clang(args.target)
+        shutil.copy2(cl, setup / "clang" / cl.name)
     glslc = setup / "glslc"
     shutil.rmtree(glslc, ignore_errors=True)
     for name in ("shaderc", "glslang", "spirv-tools", "libstdcxx", "libgcc", "vc14_runtime"):

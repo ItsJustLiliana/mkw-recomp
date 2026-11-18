@@ -18,7 +18,8 @@ Usage: python -I update.py check --version VER [--os linux|windows]
        python -I update.py fetch --tag TAG --dest DIR [--os linux|windows]
        python -I update.py clean --game DIR [--previous VERSION]
 MKW_UPDATE_REPO=owner/name (default adriadam10/mkw-recomp) and MKW_UPDATE_AS=<version> (compare as that version: a
-test) change what is asked.
+test) change what is asked; MKW_UPDATE_API=<url> asks <url>/releases/latest instead of GitHub's (a test: a local
+server offering a package not released).
 """
 
 import argparse
@@ -56,9 +57,15 @@ def emit(*words: object) -> None:
 def ca_file() -> str | None:
     """pip's bundled CA file when the system's store is empty to this Python, else None (python-build-standalone
     ships no certifi; a minimal Linux running the AppImage may have no /etc/ssl, and NixOS keeps its bundle where this
-    OpenSSL does not look, issue #102)."""
-    if os.environ.get("SSL_CERT_FILE") or ssl.create_default_context().cert_store_stats().get("x509_ca"):
+    OpenSSL does not look, issue #102; a Windows certificate store with a certificate Python cannot read raises
+    OSError "invalid ASN1 tag" when the context is made, issue #456, and counts as empty)."""
+    if os.environ.get("SSL_CERT_FILE"):
         return None
+    try:
+        if ssl.create_default_context().cert_store_stats().get("x509_ca"):
+            return None
+    except OSError:
+        pass
     for pat in (
         "lib*/python3*/site-packages/pip/_vendor/certifi/cacert.pem",
         "Lib/site-packages/pip/_vendor/certifi/cacert.pem",
@@ -87,7 +94,8 @@ def version_key(v: str) -> tuple[int, int, int] | None:
 
 
 def latest_asset(os_name: str) -> tuple[str, dict]:
-    with get(f"https://api.github.com/repos/{REPO}/releases/latest", CHECK_TIMEOUT) as r:
+    api = os.environ.get("MKW_UPDATE_API") or f"https://api.github.com/repos/{REPO}"
+    with get(f"{api}/releases/latest", CHECK_TIMEOUT) as r:
         rel = json.load(r)
     if rel.get("draft") or rel.get("prerelease"):
         raise ValueError("the latest release is not a published one")
@@ -128,7 +136,7 @@ def fetch(args: argparse.Namespace) -> None:
     if done != total or "sha256:" + h.hexdigest() != digest:
         part.unlink()
         raise ValueError(f"{asset['name']} came damaged ({done} of {total} bytes or another sha256): try again")
-    if args.os == "linux":
+    if args.os in ("linux", "linux-aarch64"):
         out = dest / asset["name"]
         part.replace(out)
         out.chmod(0o755)
@@ -169,7 +177,7 @@ def clean(args: argparse.Namespace) -> None:
                     shutil.rmtree(p) if p.is_dir() and not p.is_symlink() else p.unlink()
                 n += 1
                 break
-            except OSError:   # a running exe on Windows; in keep/, a leftover entry the previous clean-up left
+            except OSError:  # a running exe on Windows; in keep/, a leftover entry the previous clean-up left
                 time.sleep(1)
     shutil.rmtree(game / "update", ignore_errors=True)
     emit("cleaned", n)

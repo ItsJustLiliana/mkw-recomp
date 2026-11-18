@@ -7,7 +7,7 @@ sparse and precomputed BC7.
 |---|---|
 | `vk_texture.c`, `vk_tex_internal.h`, `vk_formats.c` | Image cache: its state, keys and statistics; the header is what the `vk_tex_*.c` parts share; NVN to Vulkan format table |
 | `vk_tex_image.c` | Image creation, with cube compatibility only for NVN cube targets, and the preallocated texture pool, joined and freed before allocator shutdown |
-| `vk_tex_evict.c` | Image destruction, freed entries, eviction under memory pressure and the list of textures the GPU wrote |
+| `vk_tex_evict.c` | Image destruction, freed entries (kept up to a cap; past it, those a later image was written over go: `MKW_TEX_OVERWRITTEN`), eviction under memory pressure and the list of textures the GPU wrote |
 | `vk_tex_upload.c` | Uploads with deswizzle and ASTC, and the check of whether the storage changed |
 | `vk_tex_alias.c` | Storage aliases (`MKW_TEX_ALIAS`) and GPU writes to mirrored textures |
 | `vk_tex_slots.c` | Texture and sampler descriptor slots, and the VkSamplers |

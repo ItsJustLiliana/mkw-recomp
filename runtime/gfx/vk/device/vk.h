@@ -112,6 +112,8 @@ int vk_lat_on(void);
 uint64_t vk_lat_next_id(void);                                   // the next host present's id, 0 without present wait
 void vk_lat_flip(uint64_t slot, int first, int game, uint64_t id);   // a host present of the frame shown at slot
 void vk_lat_swapchain(int begin, VkSwapchainKHR sc);             // around vkCreateSwapchainKHR (it retires the old)
+void vk_pstate_init(VkPhysicalDevice phys);   // vk_pstate.c: an AMD GPU's clocks held (MKW_GPU_CLOCKS), after the device
+void vk_pstate_frame(void);                   // each present: MKW_GPU_CLOCKS=ab switches with the A/B blocks
 void vk_lat_device(VkDevice device, int has_present_wait);                        // after the device: starts the present wait thread
 // vk_present_blit for frame generation: presents already waiting stay waiting, so the frames of one game frame are
 // all blitted at once and each vk_present_flip then queues the next at its time.
@@ -141,6 +143,7 @@ void vk_fg_release(void);   // before the device goes away
 void vk_queue_lock(void);
 void vk_queue_unlock(void);
 void vk_sync_parts_flush(void);   // queue lock held: the parts waiting for the submit thread to the queue (vk_sync.c)
+struct PlatThread *vk_sync_submit_thread(void);   // the thread "vk submit" once started, else NULL (vk_sync.c)
 // Copy of the last presented swapchain image, for probes: on, the next presents read the image back into a host buffer
 // and wait for the GPU. *px stays valid until the next present; the format is the swapchain's. Returns 0 with no frame.
 // The rectangle {x, y, w, h} of a dw x dh swapchain image a cw x ch picture is presented in (gfx_present.c,
@@ -395,7 +398,11 @@ void vk_mem_defer_idle(int on);                    // around destroying what the
 void vk_mem_defer_use(uint64_t use);               // around a deferred destruction: MKW_GPU_GUARD's last part using it
 uint64_t vk_mem_defer_fence(uint64_t fence);       // returns the previous value; around a deferred destruction: wait for that submission (0: off)
 void vk_mem_collect(void);                         // frees what has completed
-typedef struct { uint64_t imported_pools, physical_pools, virtual_pools, import_failures, upload_batches; } VkMemStats;
+// phys_host_chunks: physical pool chunks backed outside device-local memory (it was full); phys_failed_chunks: left empty.
+typedef struct {
+    uint64_t imported_pools, physical_pools, virtual_pools, import_failures, upload_batches, phys_host_chunks,
+        phys_failed_chunks;
+} VkMemStats;
 void vk_mem_stats(VkMemStats *s);
 void vk_mem_shutdown(void);                        // before vk_shutdown: waits idle, frees every memory and texture object
 
@@ -459,6 +466,7 @@ const VkTexImage *vk_texture_get(const tex_t *t);   // created and made current;
 const VkTexImage *vk_texture_by_id(int id, view_t *view, int *has_view);
 VkFormat vk_srgb_twin(VkFormat f);                    // the sRGB / UNORM twin of an 8-bit colour format, else UNDEFINED
 int vk_format_numeric(VkFormat f);                    // GFX_TYPE_* its components read as in a shader
+void vk_sparse_granularity_texels(VkFormat f, uint32_t *gw, uint32_t *gh);   // a driver's imageGranularity as texels
 uint32_t vk_texture_slot_format(int id, uint64_t *addr);   // NVN format the game registered in slot id (0: none)
 // The replay looks up many slots per draw: it takes the texture lock once around them (vk_texture_lock) and uses the
 // _locked lookups; vk_texture_slots_gen changes whenever a slot may resolve to another image or view.
@@ -478,11 +486,23 @@ int vk_texture_checked(int id, uint32_t ep);   // unlocked: slot id's check in s
 uint64_t vk_texture_slot_token(int id);
 uint32_t vk_sampler_gen(void);                      // changes whenever a sampler slot is registered
 void vk_texture_gpu_written(const tex_t *t);        // rendered or copied into by the GPU: no re-upload from storage
+void vk_texture_compute_written(int id);          // a compute dispatch wrote slot id as a storage image: the same,
+// so a linear collision height map reaches its storage at the fence (MKW wave riding, #410)
 // runtime/gfx/cap: of the live image of t, if any (none is made): VK_TEXCAP_GPU its content is what the GPU wrote,
 // VK_TEXCAP_RECENT a draw sampled it within the last `recent` submissions, VK_TEXCAP_SPARSE it is a Vulkan sparse image
 // (a sparse NVN texture may be a whole image: depth formats in RADV).
 enum { VK_TEXCAP_GPU = 1, VK_TEXCAP_RECENT = 2, VK_TEXCAP_SPARSE = 4 };
 int vk_texture_capture_state(const tex_t *t, uint32_t recent);
+// runtime/gfx/cap: the image of an ASTC texture decoded into another format (RGBA8, BC7, BC1: TexVkFormat.astc_bw), as
+// the image's own bytes, since ReadTexels has no ASTC blocks to give for it. vk_texture_decoded: 1 and its format,
+// levels, layers (a 3D image: 1) and the bytes of one layer of each level when t has such an image (none is made).
+// vk_texture_decoded_copy: nlayers layers of one level read into buf, waiting for the GPU, or written from it (the
+// replay; the image is made when missing); 0 when the image here differs in format or size (a capture made with
+// another ASTC setting or GPU) and nothing was copied.
+typedef struct { VkFormat format; uint32_t levels, layers; uint64_t bytes[16]; } VkTexDecoded;
+int vk_texture_decoded(const tex_t *t, VkTexDecoded *out);
+int vk_texture_decoded_copy(const tex_t *t, VkFormat format, uint32_t level, uint32_t layer, uint32_t nlayers,
+                            uint8_t *buf, uint64_t bytes, int write);
 // vk_mem_cap.c (runtime/gfx/cap): every backed chunk of the physical pools out to emit, with its GPU address; and one
 // chunk written back at its address (0 when no physical pool chunk starts there). Both wait for the GPU.
 uint64_t vk_mem_phys_dump(void (*emit)(uint64_t addr, const void *p, uint64_t n, void *ctx), void *ctx);
@@ -613,8 +633,8 @@ typedef struct VkPipeState {
                                            // (OP_PRIM_RESTART, set by op_draw_idx); dynamic state only
     uint8_t feedback;                      // the fragment shader samples an attachment of the pass in the feedback
                                            // layout: 1 colour, 2 depth/stencil (VK_PIPELINE_CREATE_*_FEEDBACK_LOOP_BIT_EXT)
-    float alpha_ref;                       // OP_ALPHA_REF; 0 unless color.alpha_func tests (the draw clears it). It
-                                           // fills padding: KeyRec (pipeline-keys.bin) keeps its size
+    float pad_ref;                         // 0. The alpha test's reference was here until 17/11/2026; it now goes in
+                                           // the support buffer (support_in), not the pipeline. KeyRec keeps its size
     blend_st blend[8];                    // OP_BIND_STATE kind 0, indexed by blend_st.target
     color_st color;                        // kinds 1-5
     chmask_st chmask;
@@ -626,7 +646,7 @@ typedef struct VkPipeState {
     const GfxShader *mesh;                 // a task/mesh draw whose vs is the task program: its mesh program; NULL
                                            // otherwise (a mesh program alone sits in vs)
 } VkPipeState;
-_Static_assert(__builtin_offsetof(VkPipeState, blend) == 64, "alpha_ref must stay in the padding (KeyRec size)");
+_Static_assert(__builtin_offsetof(VkPipeState, blend) == 64, "pad_ref must stay in the padding (KeyRec size)");
 void vk_pipe_state_defaults(VkPipeState *s);   // NVN defaults of every state object (shaders and formats left 0)
 enum { VK_PIPE_SUPPORT = GFX_RES_KINDS };      // VkPipeBinding.kind of the support buffer
 #define VK_PIPE_STAGE_NVN 0x80                 // VkPipeBinding.stage of a task or mesh binding: this | its NVN stage (6, 7)
@@ -677,14 +697,18 @@ void vk_pipeline_async_enable(void);
 void vk_pipeline_async_busy(unsigned *inflight, int *building);
 // Boot prewarm, before the guest runs (rt_boot): loads the shaders pipeline-keys.bin names, translating the ones not
 // cached under the current translator from their stored inputs, and builds every recorded pipeline, on all cores.
-// No-op without vk_pipeline_async_enable, with MKW_PIPE_PREBUILD=0 or with MKW_GPU=null.
+// No-op without vk_pipeline_async_enable, with MKW_PIPE_PREBUILD=0 or with MKW_GPU=null. First the shader libraries of
+// every program pair of the game copy (pipeline-pairs.bin, vk_pipe_pairs.c).
 void vk_pipeline_prewarm(void);
 VkPipeline vk_pipeline_compute(const GfxShader *cs, const VkPipeInfo **info);
+// The same with the program's FIRST_STORE set (gfx_shader_first_store): 1 only the first invocation's stores, 2 all
+// but them; same layout as vk_pipeline_compute's
+VkPipeline vk_pipeline_compute_first(const GfxShader *cs, uint32_t first, const VkPipeInfo **info);
 // Task/mesh as compute (vk_mesh_cs.c): whether DrawMeshTasks goes that way, and its device-local scratch for a
 // submission (fence): buffer, offset and GPU address; 0 when no memory.
 int vk_mesh_cs_on(void);
 int vk_mesh_cs_alloc(uint64_t fence, VkDeviceSize size, VkBuffer *buf, VkDeviceSize *off, VkDeviceAddress *addr);
-VkPipeline vk_mesh_cs_compact_pipeline(VkPipelineLayout *layout);   // runtime/shaders/mesh_compact.comp
+VkPipeline vk_mesh_cs_compact_pipeline(VkPipelineLayout *layout);   // runtime/shaders/mesh/mesh_compact.comp
 // Records every dynamic state that VkPipeState determines, after binding a graphics pipeline: cull mode, front face,
 // topology, depth and stencil tests and ops, depth bias enable, rasterizer discard, vertex input, and, where the GPU
 // has them dynamic, depth clamp, polygon mode, blend enables, equations, write masks and alpha to coverage. The replay

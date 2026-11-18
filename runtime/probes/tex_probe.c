@@ -120,6 +120,42 @@ static int test_deswizzle(void) {
     return 0;
 }
 
+// nvn_deswizzle_rows in bands of `band` rows, done in any order over the texture workers (vk_tex_upload.c's split of an
+// upload), against the whole level: the same bytes, and the padding past each row left alone.
+typedef struct { const nvn_texdesc *d; unsigned lv, layer; const uint8_t *store; uint8_t *lin; size_t pitch; uint32_t band; } RowsJob;
+static void rows_item(void *ctx, uint32_t i) {
+    const RowsJob *J = ctx;
+    nvn_deswizzle_rows(J->d, J->lv, J->layer, J->store, J->lin, J->pitch, i * J->band, (i + 1) * J->band, NULL);
+}
+static int check_rows(const nvn_texdesc *d, unsigned lv, unsigned layer) {
+    uint32_t rb, rows, sl, bpb, all = 0; uint64_t base; unsigned th, td;
+    if (nvn_deswizzle_geom(d, lv, layer, &rb, &rows, &sl, &base, &th, &td, &bpb)) { printf("probe-vkmem: FAIL rows geometry\n"); return 1; }
+    nvn_texlayout L;
+    nvn_tex_layout(d, &L);
+    size_t pitch = rb + 24, n = pitch * rows * sl;
+    uint8_t *store = malloc(L.size), *want = malloc(n), *got = malloc(n);
+    for (uint64_t i = 0; i < L.size; i++) store[i] = rnd8();
+    memset(want, 0x5A, n);
+    if (nvn_deswizzle(d, lv, layer, store, want, pitch)) { printf("probe-vkmem: FAIL rows reference\n"); return 1; }
+    for (uint32_t band = 1; band <= rows * sl + 1; band = band * 3 + 1) {
+        memset(got, 0x5A, n);
+        if (nvn_deswizzle_rows(d, lv, layer, store, got, pitch, 0, 0, &all) || all != rows * sl) {
+            printf("probe-vkmem: FAIL rows count format %#x level %u: %u, want %u\n", d->format, lv, all, rows * sl);
+            return 1;
+        }
+        RowsJob J = {d, lv, layer, store, got, pitch, band};
+        tex_par_for((all + band - 1) / band, rows_item, &J);
+        if (memcmp(got, want, n)) {
+            printf("probe-vkmem: FAIL rows format %#x target %d level %u layer %u in bands of %u differ from nvn_deswizzle\n",
+                   d->format, d->target, lv, layer, band);
+            return 1;
+        }
+        g_cases++;
+    }
+    free(store), free(want), free(got);
+    return 0;
+}
+
 // nvn_texels_box against the whole-level path on random boxes: a box read equals the box cut from the deswizzled level,
 // and a box write leaves the storage as deswizzle, overwrite the box, swizzle does (nothing outside the box changes).
 static int check_box(const nvn_texdesc *d, unsigned lv, unsigned layer) {
@@ -174,7 +210,9 @@ static int test_box(void) {
         nvn_texdesc da = {.target = 4, .format = fmt[i], .width = 96, .height = 80, .depth = 3, .levels = 2};
         nvn_texdesc d3 = {.target = 2, .format = fmt[i], .width = 72, .height = 40, .depth = 5, .levels = 2};
         for (unsigned lv = 0; lv < 2; lv++)
-            if (check_box(&d2, lv, 0) || check_box(&da, lv, 2) || check_box(&d3, lv, 0)) return 1;
+            if (check_box(&d2, lv, 0) || check_box(&da, lv, 2) || check_box(&d3, lv, 0) || check_rows(&d2, lv, 0) ||
+                check_rows(&da, lv, 2) || check_rows(&d3, lv, 0))
+                return 1;
     }
     return 0;
 }
@@ -257,7 +295,35 @@ static int test_astc(void) {
 // ---- formats ----
 static unsigned n_mapped, n_supported, n_unmapped, n_unsupported, n_fallback;
 
+// imageGranularity in texels (NVIDIA) or in compressed blocks (Intel's Windows driver: BC #476, ASTC #540): both come
+// out in texels.
+static int test_granularity(void) {
+    static const struct { VkFormat f; uint32_t gw, gh, want_w, want_h; } c[] = {
+        {VK_FORMAT_BC7_SRGB_BLOCK, 256, 256, 256, 256},   // NVIDIA, RTX 3050 (#443's log)
+        {VK_FORMAT_BC7_SRGB_BLOCK, 64, 64, 256, 256},     // Intel Arc B580 (#476's log)
+        {VK_FORMAT_BC6H_UFLOAT_BLOCK, 64, 64, 256, 256},
+        {VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 512, 256, 512, 256},
+        {VK_FORMAT_BC1_RGBA_UNORM_BLOCK, 128, 64, 512, 256},
+        {VK_FORMAT_R8G8B8A8_UNORM, 128, 128, 128, 128},
+        {VK_FORMAT_ASTC_8x8_SRGB_BLOCK, 64, 64, 512, 512},      // Intel Iris Xe, native ASTC (#540's log)
+        {VK_FORMAT_ASTC_8x8_UNORM_BLOCK, 512, 512, 512, 512},   // the same in texels
+        {VK_FORMAT_ASTC_4x4_UNORM_BLOCK, 64, 64, 256, 256},
+        {VK_FORMAT_ASTC_4x4_SRGB_BLOCK, 256, 256, 256, 256},
+    };
+    for (size_t i = 0; i < sizeof c / sizeof *c; i++) {
+        uint32_t w = c[i].gw, h = c[i].gh;
+        vk_sparse_granularity_texels(c[i].f, &w, &h);
+        if (w != c[i].want_w || h != c[i].want_h) {
+            printf("probe-vkmem: FAIL sparse granularity %ux%u of VkFormat %d -> %ux%u, want %ux%u\n", c[i].gw, c[i].gh,
+                   (int)c[i].f, w, h, c[i].want_w, c[i].want_h);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 static int test_formats(void) {
+    if (test_granularity()) return 1;
     if (!vk_init()) { printf("probe-vkmem: FAIL vk_init\n"); return 1; }
     printf("probe-vkmem: GPU %s\n", vk_ctx()->props.deviceName);
     for (int f = 0; f <= 0x9C; f++) {
@@ -627,6 +693,51 @@ static int test_textures(pool_t *tpool, pool_t *phys) {
     return 0;
 }
 
+// Device-local memory full (#443: RTX 3050 4 GB, chunks left empty drew a dark band): with the device-local heap capped
+// by MKW_GPU_MEM_LIMIT_HEAP<n> (heap 0 on a discrete GPU, heap 1 on the Radeon 660M: the log's "mem: types" line),
+// fill what device-local memory is left, then back a physical pool; its chunk has to land outside device-local memory
+// and the GPU write through a virtual page has to read back. Skipped without a cap: it would fill a real GPU's VRAM.
+static int test_phys_full(uint8_t *h) {
+    int capped = 0;
+    for (int i = 0; i < 16 && !capped; i++) {
+        char name[32];
+        snprintf(name, sizeof name, "MKW_GPU_MEM_LIMIT_HEAP%d", i);
+        capped = cfg_get(name) != NULL;
+    }
+    if (!capped) {
+        printf("probe-vkmem: physical pool with device-local memory full: skipped (needs MKW_GPU_MEM_LIMIT_HEAP<n>=1 on "
+               "the device-local heap)\n");
+        return 0;
+    }
+    VkCtx *c = vk_ctx();
+    enum { MAX_FILL = 16384 };
+    VmaAllocation *fill = calloc(MAX_FILL, sizeof *fill);
+    int n = 0;
+    VkMemoryRequirements req = {.size = 64 << 10, .alignment = 64 << 10, .memoryTypeBits = ~0u};
+    VmaAllocationCreateInfo aci = {.requiredFlags = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT};
+    while (n < MAX_FILL && vmaAllocateMemory(c->vma, &req, &aci, &fill[n], NULL) == VK_SUCCESS) n++;
+    VkMemStats before, after;
+    vk_mem_stats(&before);
+    pool_t phys = {.magic = NVN_POOL_MAGIC, .flags = 0x189, .mem = (uint8_t *)(uintptr_t)(RT_GPU_VA_BASE + 0x300000000ull),
+                   .size = 0x40000, .game_mem = h + 0xa00000, .span = 0x40000};
+    pool_t virt = {.magic = NVN_POOL_MAGIC, .flags = 0x2a1, .mem = (uint8_t *)(uintptr_t)(RT_GPU_VA_BASE + 0x400000000ull),
+                   .size = 0x80000, .span = 0x80000};
+    int bad = n == MAX_FILL || test_virtual(&phys, &virt);
+    vk_mem_stats(&after);
+    vk_pool_fini(&virt), vk_pool_fini(&phys);
+    for (int i = 0; i < n; i++) vmaFreeMemory(c->vma, fill[i]);
+    free(fill);
+    GCHECK(!bad, "device-local memory still had room after %d blocks of 64 KiB, or the pool drew wrong", n);
+    GCHECK(after.phys_host_chunks > before.phys_host_chunks && after.phys_failed_chunks == before.phys_failed_chunks,
+           "chunks outside device-local memory %llu -> %llu, failed %llu -> %llu", (unsigned long long)before.phys_host_chunks,
+           (unsigned long long)after.phys_host_chunks, (unsigned long long)before.phys_failed_chunks,
+           (unsigned long long)after.phys_failed_chunks);
+    printf("probe-vkmem: physical pool with device-local memory full (%d KiB filled): backed outside it and drawn right\n",
+           n * 64);
+    g_gpu_checks += 2;
+    return 0;
+}
+
 static int test_gpu(void) {
     uint64_t heap = 0;
     GCHECK(mem_set_heap_size(16ull << 20, &heap) == 0 && heap, "SetHeapSize 16 MiB");
@@ -641,6 +752,7 @@ static int test_gpu(void) {
     if (vk_mem_shadow_on() && test_merge(&pool)) return 1;
     GCHECK(vk_pool_init(&tpool), "vk_pool_init of the texture pool");
     if (test_textures(&tpool, &phys)) return 1;
+    if (test_phys_full(h)) return 1;
     const char *cap = cfg_get("MKW_SHADOW_SUBMIT");   // a measurement, off by default
     if (vk_mem_shadow_on() && cap && !strcmp(cap, "1") && test_capture(&pool)) return 1;
     VkMemStats st;
