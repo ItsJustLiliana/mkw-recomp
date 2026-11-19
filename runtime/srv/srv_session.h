@@ -41,7 +41,7 @@ typedef struct {
 
 typedef struct {
     char id[24], tenant[64], config[64], batching[64], version[64], alias[8], creation[24];
-    int room, closed, max_players, nmembers, listeners;
+    int room, closed, max_players, nmembers, listeners, ever_listened;
     SrvMember members[MEMBERS_MAX];   // in member order (the first is the host)
     int64_t next_ussid, next_upcsid;  // rooms: numbers handed out so far, never given twice
     SrvMap attrs;                     // the session attributes (GameSession field 11)
