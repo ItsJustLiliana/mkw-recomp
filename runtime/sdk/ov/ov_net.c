@@ -525,12 +525,13 @@ static void ov_socket(Cpu *c) {
         // stalls (e.g. a slower GPU) without losing incoming race updates.
         int size = P2P_UDP_RCVBUF;
         int rc = setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&size, sizeof size);
+        int set_error = rc ? WSAGetLastError() : 0;
         if (udp_trace()) {
             int actual = 0, actual_len = sizeof actual;
             int queried = getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&actual, &actual_len);
+            int query_error = queried ? WSAGetLastError() : 0;
             rt_log("net-udp: fd=%d receive buffer requested=%d actual=%d set_error=%d query_error=%d",
-                   fd, size, queried ? 0 : actual, rc ? WSAGetLastError() : 0,
-                   queried ? WSAGetLastError() : 0);
+                   fd, size, queried ? 0 : actual, set_error, query_error);
         }
     }
 #endif
