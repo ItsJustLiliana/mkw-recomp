@@ -352,12 +352,13 @@ static int udp_trace(void) {
     return v && *v && strcmp(v, "0") != 0;
 }
 
-// A slow/render-bound peer can leave network datagrams queued for several
-// frames. Winsock's small default UDP receive queue silently discards the
-// oldest packets when it fills, which looks like a Pia peer timeout rather
-// than a socket error. Reserve bounded headroom before binding/receiving.
-// Game-facing getsockopt still reports the option the guest explicitly set.
-#define P2P_UDP_RCVBUF  (512 * 1024)
+// Reserve bounded receive headroom for a full 24-player P2P race. This
+// memory belongs to the CLIENT'S UDP socket, not to a lobby on the server:
+// additional server lobbies do not multiply this client's socket buffers.
+// The kernel can silently discard incoming packets when the queue fills
+// during a frame/render stall, without reporting any socket error.
+// Game-facing getsockopt still reports the option the guest requested.
+#define P2P_UDP_RCVBUF  (2 * 1024 * 1024)
 static int udp_recvbuf_wanted(int requested, int type) {
 #ifdef _WIN32
     return type == 2 && requested < P2P_UDP_RCVBUF ? P2P_UDP_RCVBUF : requested;
