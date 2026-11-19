@@ -339,6 +339,7 @@ static void listen_msg(SrvCall *c, const uint8_t *msg, size_t len) {
             SrvMember *m = srv_member(s, L->uid);
             if (m) {
                 m->streams++;
+                m->ever_streamed = 1;
                 if (m->reconnect_deadline_ms) {
                     srv_log("gamesync reconnect session=%s member=%s: previous stream recovered", s->id, L->uid);
                     m->reconnect_deadline_ms = 0;

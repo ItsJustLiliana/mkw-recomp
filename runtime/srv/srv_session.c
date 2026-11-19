@@ -428,16 +428,29 @@ static int session_accepting(const SrvSession *s);
 // Reply {1: MemberEntry..., 2: GameSession}.
 static void join(SrvCall *c, const uint8_t *msg, size_t len) {
     const char *uid = srv_call_uid(c);
-    SrvSession *s = session_of(c, msg, len);
+    char tenant[64];
+    tenant_of(c, tenant);
+    // JoinGameSession must use the caller's explicit destination, not the
+    // last game session this device was in. The latter is a valid fallback
+    // for certain session queries but sends friend joins to stale lobbies.
+    SrvSession *s = session_named(msg, len);
     PbOut o = {0};
-    if (!s) {
-        reply(c, &o);
+    if (!s || !*uid || strcmp(s->tenant, tenant)) {
+        srv_call_end(c, ST_FAILED_PRECONDITION, "requested lobby is unavailable");
         return;
     }
     SrvMember *m = srv_member(s, uid);
-    if (*uid && m) {
-        m->seq = ++member_seq;   // joining a room one is in already is accepted
-    } else if (*uid) {
+    if (m) {
+        // An intentional Gamesync departure is not permission to revive
+        // an old matchmade race via the Friends menu. Room members can still
+        // return; a transient transport reset may resume during grace.
+        if (!s->room && m->ever_streamed && !m->streams &&
+            (!m->reconnect_deadline_ms || srv_ms() >= m->reconnect_deadline_ms)) {
+            srv_call_end(c, ST_FAILED_PRECONDITION, "previous race was left");
+            return;
+        }
+        m->seq = ++member_seq;
+    } else {
         if (!s->room && !session_accepting(s)) {
             srv_call_end(c, ST_FAILED_PRECONDITION, "lobby is not accepting players");
             return;
@@ -468,7 +481,7 @@ static void join(SrvCall *c, const uint8_t *msg, size_t len) {
             return;
         }
         docs_end(&s->docs, (int64_t)time(NULL));
-        srv_log("a player joined room %s (%d in it)", s->id, s->nmembers);
+        srv_log("a player joined %s (%d in it, via %s)", s->id, s->nmembers, s->room ? "room" : "friend lobby");
         srv_gs_changed(s, 1);   // their __us document, "added", to everyone listening
     }
     put_members(&o, 1, s, uid);
@@ -856,7 +869,14 @@ static SrvSession *returning_target(const Ticket *t) {
             strcmp(s->batching, t->batching))
             continue;
         SrvMember *m = srv_member(s, t->uid);
-        if (!m || (*t->build && *m->build && strcmp(t->build, m->build))) continue;
+        // The log showed repeated reattachment to gs-0001 with grace=0
+        // after intentional KeepUserSession closures. Those were fresh
+        // matchmaking attempts, NOT transport reconnects. Only reuse an
+        // already-entered member during an actual unexpected-close grace.
+        // A reserved seat that has never opened its stream can still join.
+        if (!m || (m->ever_streamed && (!m->reconnect_deadline_ms ||
+                   srv_ms() >= m->reconnect_deadline_ms)) ||
+            (*t->build && *m->build && strcmp(t->build, m->build))) continue;
         if (!best || m->seq > newest) best = s, newest = m->seq;
     }
     return best;
@@ -881,7 +901,10 @@ static void match_queue(Ticket **q, int n, uint64_t now) {
         for (int k = 0; k < np && !dup; k++) dup = !strcmp(pick[k]->uid, q[i]->uid);
         if (!dup && !active_gamesync_peer(q[i]->uid)) pick[np++] = q[i];
     }
-    if (np < 2 && !alone) return;
+    // All tickets may belong to racers who still have a live Gamesync
+    // listener. The solo timer must NEVER dereference pick[0] in that case,
+    // or start a session without a member. Leave those tickets searching.
+    if (np == 0 || (np < 2 && !alone)) return;
     SrvMap attrs;
     if (!map_copy(&attrs, &pick[0]->attrs)) return;
     map_del(&attrs, "npln_user_id");

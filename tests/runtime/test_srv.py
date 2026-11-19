@@ -892,7 +892,7 @@ def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     connected_ticket = ticket(c, tc, "cv7")
     sc = c.sid()
     call(c, sc, MM + "TrackMatchmakingTicket", pb(1, connected_ticket), headers(tc))
-    pump_all([c, d], lambda: len(msgs(c.data[sc])) > 0, 3)
+    pump_all([c, d], lambda: len(msgs(c.data.get(sc, b""))) > 0, 3)
     assert [fields(m)[5][0] for m in msgs(c.data[sc])] == [1], "active peer must not reattach"
     unary(c, MM + "CancelMatchmakingTicket", pb(1, connected_ticket), tc)
     pump_all([c, d], lambda: sc in c.ended, 3)
@@ -914,6 +914,12 @@ def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     assert mapof(fields(batch[1][0])[11][0])["rule"] == rule
     joined = unary(f, GSS + "JoinGameSession", pb(1, session_name), tf)
     assert len(joined[1]) == 4, "a friend joins the accepting existing public lobby"
+    assert fields(joined[2][0])[1][0] == session_name, "friend join must target the requested lobby"
+    # A malformed or vanished friend's lobby must NOT silently select f's
+    # most recently joined session. Old code fell back to session_recent().
+    missing = unary(f, GSS + "JoinGameSession",
+                    pb(1, f"tenants/{TENANT}/gameSessions/gs-nonexistent"), tf)
+    assert not missing, "a missing friend lobby must fail, never return stale credentials"
     outsider = H2(server)
     outsider_token = signed(outsider, "999999999999")
     write(c, gc, w_set("__gs/m", {"cp": True, "ip": True, "ebf": True, "bfmax": 4}))
@@ -923,6 +929,34 @@ def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     rejected = unary(d, GSS + "JoinGameSession", pb(1, session_name), td)
     assert rejected, "an existing member may reconnect even after admission closes"
     assert "joined gs-" in (server / "logs/server.log").read_text()
+
+    # Regression for Nov 19's stuck "Waiting for players to join": the
+    # client deliberately closes KeepUserSession (the server logged -> 0),
+    # then presses Online again. That is a new matchmaking cycle, NOT a
+    # transport reset. Returning the stale gs-0001 credentials traps it.
+    d_entry = fields(fields(msgs(d.data[streams[1][1]])[-1])[6][1])
+    ud = f"{666666666666:016x}"
+    issued_d = unary(d, GSYNC + "IssueToken",
+                     pb(1, f"userSessions/us-{ud}") + pb(2, d_entry[3][0]), tenant=False)
+    gd = fields(issued_d[1][0])[2][0].decode()
+    ld = d.sid()
+    call(d, ld, GSYNC + "KeepUserSession",
+         pb(3, pb(1, pb(1, "test/leave") + pb(3, pb(1, "docs/__us")))),
+         headers(gd, False), end=False)
+    pump_all([c, d], lambda: "member=u-" + ud + " streams=1" in
+             (server / "logs/server.log").read_text(), 3)
+    d.s.sendall(frame(0, 1, ld, b""))  # intentional half-close
+    pump_all([c, d], lambda: ld in d.ended, 3)
+    fresh = ticket(d, td, "cv7")
+    sf = d.sid()
+    call(d, sf, MM + "TrackMatchmakingTicket", pb(1, fresh), headers(td))
+    pump_all([c, d], lambda: bool(msgs(d.data.get(sf, b""))), 3)
+    assert [fields(m)[5][0] for m in msgs(d.data[sf])] == [1], (
+        "intentional departure must not silently reuse the previously raced session")
+    unary(d, MM + "CancelMatchmakingTicket", pb(1, fresh), td)
+    pump_all([c, d], lambda: sf in d.ended, 3)
+    assert [fields(m)[5][0] for m in msgs(d.data[sf])] == [1, 6]
+
     for h in (c, d, e, f, outsider):
         h.s.close()
 
