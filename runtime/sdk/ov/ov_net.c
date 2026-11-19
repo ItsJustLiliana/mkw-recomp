@@ -335,7 +335,7 @@ typedef struct {
     HostSock s;             // the socket; an eventfd's read end (a loopback UDP socket the writes wake)
     HostSock w;             // an eventfd's write end
     uint64_t value;         // an eventfd's counter
-    int semaphore;
+    int semaphore, ev_wakeup_queued; // retry failed wakeup writes; avoid a permanently asleep poller
     uint64_t udp_tx_packets, udp_rx_packets, udp_tx_bytes, udp_rx_bytes;
     uint32_t udp_errors;
     uint64_t udp_tx_last_ns, udp_rx_last_ns; // last successful packet for opt-in stall diagnostics
@@ -1001,7 +1001,12 @@ static void ov_eventfd(Cpu *c) {
     // readable, and an emulator that runs MKW online (Droplet) keeps every guest eventfd non-blocking the same way.
     f->semaphore = (uint32_t)arg_x(c, 1) & 1;
     f->nonblock = 1;
-    if (f->value) send(f->w, "", 1, 0);
+    if (f->value) {
+        int sent = send(f->w, "", 1, 0);
+        f->ev_wakeup_queued = sent >= 0;
+        if (sent < 0 && udp_trace())
+            rt_log("net-eventfd: initial wakeup failed fd=%d host_error=%d", fd, host_error());
+    }
     ret_x(c, (uint64_t)fd);
 }
 
@@ -1014,12 +1019,14 @@ static void ov_eventfd_write(Cpu *c) {
     // The previous unconditional send on *every* write could fill the loopback
     // UDP queue during a slow guest frame, making later wakeups unreliable.
     // Serialize the 0 -> nonzero transition with the reader's drain.
-    uint64_t previous = f->value;
     f->value += arg_x(c, 1);
-    if (!previous && f->value) {
+    if (f->value && !f->ev_wakeup_queued) {
+        // Previous send can fail even though the counter was updated. Retry
+        // on subsequent writes rather than relying on a lost 0->1 transition.
         int sent = send(f->w, "", 1, 0);
-        if (sent < 0 && udp_trace())
-            rt_log("net-eventfd: wakeup send failed fd=%d host_error=%d",
+        if (sent >= 0) f->ev_wakeup_queued = 1;
+        else if (udp_trace())
+            rt_log("net-eventfd: wakeup send failed fd=%d host_error=%d (retry on next write)",
                    (int)arg_x(c, 0), host_error());
     }
     plat_mutex_unlock(&ev_lock);
@@ -1036,12 +1043,16 @@ static void ov_eventfd_read(Cpu *c) {
         if (f->value) {
             uint64_t v = f->semaphore ? 1 : f->value;
             f->value -= v;
-            if (!f->value) drain(f->s);
+            if (!f->value) {
+                drain(f->s);
+                f->ev_wakeup_queued = 0;
+            }
             plat_mutex_unlock(&ev_lock);
             if (out) *out = v;
             return ret_x(c, 0);
         }
         drain(f->s);
+        f->ev_wakeup_queued = 0;
         plat_mutex_unlock(&ev_lock);
         if (f->nonblock) return ret_fail(c, G_EAGAIN);
         HostPoll p;
