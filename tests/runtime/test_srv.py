@@ -887,6 +887,16 @@ def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     assert fields(returned[7][0])[1][0] == session_name
     assert len(returned[6]) == 3, "returning player reuses member entry; no duplicate racer"
     assert "returning player reattached to " in (server / "logs/server.log").read_text()
+    # An already connected racer starting a second ticket is NOT a reconnect:
+    # never complete that ticket into the active P2P race in parallel.
+    connected_ticket = ticket(c, tc, "cv7")
+    sc = c.sid()
+    call(c, sc, MM + "TrackMatchmakingTicket", pb(1, connected_ticket), headers(tc))
+    pump_all([c, d], lambda: len(msgs(c.data[sc])) > 0, 3)
+    assert [fields(m)[5][0] for m in msgs(c.data[sc])] == [1], "active peer must not reattach"
+    unary(c, MM + "CancelMatchmakingTicket", pb(1, connected_ticket), tc)
+    pump_all([c, d], lambda: sc in c.ended, 3)
+    assert [fields(m)[5][0] for m in msgs(c.data[sc])] == [1, 6]
     e = H2(server)
     te = signed(e, "777777777777")
     name = ticket(e, te, "cv7")
