@@ -481,7 +481,7 @@ static void join(SrvCall *c, const uint8_t *msg, size_t len) {
             return;
         }
         docs_end(&s->docs, (int64_t)time(NULL));
-        srv_log("a player joined %s %s (%d in it)", s->room ? "room" : "friend lobby", s->id, s->nmembers);
+        srv_log("a player joined %s (%d in it, via %s)", s->id, s->nmembers, s->room ? "room" : "friend lobby");
         srv_gs_changed(s, 1);   // their __us document, "added", to everyone listening
     }
     put_members(&o, 1, s, uid);
