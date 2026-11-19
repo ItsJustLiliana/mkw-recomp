@@ -914,6 +914,12 @@ def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     assert mapof(fields(batch[1][0])[11][0])["rule"] == rule
     joined = unary(f, GSS + "JoinGameSession", pb(1, session_name), tf)
     assert len(joined[1]) == 4, "a friend joins the accepting existing public lobby"
+    assert fields(joined[2][0])[1][0] == session_name, "friend join must target the requested lobby"
+    # A malformed or vanished friend's lobby must NOT silently select f's
+    # most recently joined session. Old code fell back to session_recent().
+    missing = unary(f, GSS + "JoinGameSession",
+                    pb(1, f"tenants/{TENANT}/gameSessions/gs-nonexistent"), tf)
+    assert not missing, "a missing friend lobby must fail, never return stale credentials"
     outsider = H2(server)
     outsider_token = signed(outsider, "999999999999")
     write(c, gc, w_set("__gs/m", {"cp": True, "ip": True, "ebf": True, "bfmax": 4}))
