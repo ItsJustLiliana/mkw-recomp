@@ -881,7 +881,10 @@ static void match_queue(Ticket **q, int n, uint64_t now) {
         for (int k = 0; k < np && !dup; k++) dup = !strcmp(pick[k]->uid, q[i]->uid);
         if (!dup && !active_gamesync_peer(q[i]->uid)) pick[np++] = q[i];
     }
-    if (np < 2 && !alone) return;
+    // All tickets may belong to racers who still have a live Gamesync
+    // listener. The solo timer must NEVER dereference pick[0] in that case,
+    // or start a session without a member. Leave those tickets searching.
+    if (np == 0 || (np < 2 && !alone)) return;
     SrvMap attrs;
     if (!map_copy(&attrs, &pick[0]->attrs)) return;
     map_del(&attrs, "npln_user_id");
