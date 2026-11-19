@@ -970,8 +970,18 @@ static void ov_eventfd_write(Cpu *c) {
     GFd *f = fd_get((int)arg_x(c, 0), FD_EVENT);
     if (!f) return ret_fail(c, G_EBADF);
     plat_mutex_lock(&ev_lock);
+    // Eventfd is level-triggered: one unread wakeup is enough while value != 0.
+    // The previous unconditional send on *every* write could fill the loopback
+    // UDP queue during a slow guest frame, making later wakeups unreliable.
+    // Serialize the 0 -> nonzero transition with the reader's drain.
+    uint64_t previous = f->value;
     f->value += arg_x(c, 1);
-    send(f->w, "", 1, 0);
+    if (!previous && f->value) {
+        int sent = send(f->w, "", 1, 0);
+        if (sent < 0 && udp_trace())
+            rt_log("net-eventfd: wakeup send failed fd=%d host_error=%d",
+                   (int)arg_x(c, 0), host_error());
+    }
     plat_mutex_unlock(&ev_lock);
     ret_x(c, 0);
 }
