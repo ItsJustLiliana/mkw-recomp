@@ -900,10 +900,22 @@ static void matcher(uint64_t now) {
         SrvSession *s = returning_target(t);
         if (!s) continue;
         SrvMember *m = srv_member(s, t->uid);
-        if (!m) continue;
+        // Do not re-match an actively connected racer back into their own
+        // in-progress race. This path is for a member whose Gamesync stream
+        // actually went away; another ticket must wait for normal matchmaking.
+        if (!m || m->streams) continue;
         m->seq = ++member_seq;
+        // The old stream may have closed up to 15 seconds before the player
+        // reaches Matchmaker. Give the *new* Gamesync handshake a full grace
+        // interval before running its deferred participation deletion. The
+        // deadline remains bounded and is cleared when the new stream opens.
+        if (m->reconnect_deadline_ms) {
+            const uint64_t grace = 15000; // keep in sync with RECONNECT_GRACE_MS in srv_gamesync.c
+            m->reconnect_deadline_ms = now > UINT64_MAX - grace ? UINT64_MAX : now + grace;
+        }
         placed(t, s, now);
-        srv_log("returning player reattached to %s (members=%d listeners=%d)", s->id, s->nmembers, s->listeners);
+        srv_log("returning player reattached to %s (members=%d listeners=%d grace=%d)",
+                s->id, s->nmembers, s->listeners, m->reconnect_deadline_ms != 0);
     }
     n = by_age(list, T_SEARCHING);
     for (int i = 0; i < n; i++) {   // 3. backfill, oldest ticket first
