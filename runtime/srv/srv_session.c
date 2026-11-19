@@ -808,7 +808,14 @@ static int session_accepting(const SrvSession *s) {
 static SrvSession *backfill_target(const Ticket *t) {
     for (int i = 0; i < nsessions; i++) {
         SrvSession *s = sessions[i];
-        if (s->room || s->closed || !s->nmembers || strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
+        // Historical __pgn participation documents can outlive every listener.
+        // Never backfill into an abandoned game session merely because a stale
+        // document still advertises ebf=true; that strand creates ghost lobbies.
+        // Admit newcomers during initial loading before the first stream,
+        // but never put them in a previously established lobby after its
+        // final listener has gone. Preserve 24-player initial backfill.
+        if (s->room || s->closed || (!s->listeners && s->ever_listened) || !s->nmembers ||
+            strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
             strcmp(s->batching, t->batching) || srv_member(s, t->uid))
             continue;
         if (!session_accepting(s)) continue;
@@ -818,6 +825,41 @@ static SrvSession *backfill_target(const Ticket *t) {
         if (ok) return s;
     }
     return NULL;
+}
+
+// An open Gamesync listener means this user is still in a live peer group.
+// Keep any extra ticket searching until the old stream goes away; otherwise
+// the 15-second solo fallback can split an actively racing player into a
+// second lobby even if we correctly reject an immediate reattachment.
+static int active_gamesync_peer(const char *uid) {
+    for (int i = 0; i < nsessions; i++) {
+        SrvMember *m = srv_member(sessions[i], uid);
+        if (m && m->streams) return 1;
+    }
+    return 0;
+}
+
+// A player who lost their online race and re-enters matchmaking may still
+// own an existing member slot in the session their peers are using. The old
+// matcher excluded that session from backfill (srv_member != NULL) and, after
+// solo_after, created a second lobby instead. Reuse the SAME member/credentials
+// without adding another __us, changing station numbers, or interrupting peers.
+// This is a backend reattach only: a running game's Pia state might still reject
+// a mid-race join. Other lobbies and new players are unaffected.
+static SrvSession *returning_target(const Ticket *t) {
+    SrvSession *best = NULL;
+    uint64_t newest = 0;
+    for (int i = 0; i < nsessions; i++) {
+        SrvSession *s = sessions[i];
+        if (s->room || s->closed || !s->listeners ||
+            strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
+            strcmp(s->batching, t->batching))
+            continue;
+        SrvMember *m = srv_member(s, t->uid);
+        if (!m || (*t->build && *m->build && strcmp(t->build, m->build))) continue;
+        if (!best || m->seq > newest) best = s, newest = m->seq;
+    }
+    return best;
 }
 
 // One queue (oldest first): a session once two tickets are ready, or one has waited alone long enough; Knockout
@@ -837,7 +879,7 @@ static void match_queue(Ticket **q, int n, uint64_t now) {
     for (int i = 0; i < (alone || ko ? n : ready) && np < size; i++) {
         int dup = 0;   // a player with two tickets is in a session once
         for (int k = 0; k < np && !dup; k++) dup = !strcmp(pick[k]->uid, q[i]->uid);
-        if (!dup) pick[np++] = q[i];
+        if (!dup && !active_gamesync_peer(q[i]->uid)) pick[np++] = q[i];
     }
     if (np < 2 && !alone) return;
     SrvMap attrs;
@@ -865,7 +907,35 @@ static void matcher(uint64_t now) {
         if (tickets[i].used && tickets[i].state == T_PLACING && now - tickets[i].placed_ms >= PLACING_MS)
             tickets[i].state = T_SUCCEEDED;
     int n = by_age(list, T_SEARCHING);
-    for (int i = 0; i < n; i++) {   // 2. backfill, oldest ticket first
+    // 2. Reattach returning members before ordinary backfill or solo creation.
+    // This preserves the old lobby while its other members are still online,
+    // instead of splitting players between gs-N and gs-N+1 on reconnect.
+    for (int i = 0; i < n; i++) {
+        Ticket *t = list[i];
+        SrvSession *s = returning_target(t);
+        if (!s) continue;
+        SrvMember *m = srv_member(s, t->uid);
+        // Do not re-match an actively connected racer back into their own
+        // in-progress race. This path is for a member whose Gamesync stream
+        // actually went away; another ticket must wait for normal matchmaking.
+        if (!m || m->streams) continue;
+        m->seq = ++member_seq;
+        // The old stream may have closed up to 15 seconds before the player
+        // reaches Matchmaker. Give the *new* Gamesync handshake a full grace
+        // interval before running its deferred participation deletion. The
+        // deadline remains bounded and is cleared when the new stream opens.
+        if (m->reconnect_deadline_ms) {
+            const uint64_t grace = GAMESYNC_RECONNECT_GRACE_MS;
+            m->reconnect_deadline_ms = now > UINT64_MAX - grace ? UINT64_MAX : now + grace;
+        }
+        placed(t, s, now);
+        srv_log("returning player reattached to %s (members=%d listeners=%d grace=%d)",
+                s->id, s->nmembers, s->listeners, m->reconnect_deadline_ms != 0);
+    }
+    n = by_age(list, T_SEARCHING);
+    for (int i = 0; i < n; i++) {   // 3. backfill, oldest ticket first
+        // A live peer must not be backfilled into a second session.
+        if (active_gamesync_peer(list[i]->uid)) continue;
         SrvSession *s = backfill_target(list[i]);
         if (!s || !member_add(s, list[i]->uid, &list[i]->attrs, s->nmembers + 1)) continue;
         docs_end(&s->docs, (int64_t)time(NULL));
@@ -873,7 +943,7 @@ static void matcher(uint64_t now) {
         srv_log("a player joined %s in progress (%d in it)", s->id, s->nmembers);
         srv_gs_changed(s, 1);
     }
-    n = by_age(list, T_SEARCHING);   // 3. new sessions, per (game, config, batching key), then per build
+    n = by_age(list, T_SEARCHING);   // 4. new sessions, per (game, config, batching key), then per build
     memset(grouped, 0, sizeof grouped);
     for (int i = 0; i < n; i++) {
         if (grouped[i] || list[i]->state != T_SEARCHING) continue;

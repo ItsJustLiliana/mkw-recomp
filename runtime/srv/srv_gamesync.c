@@ -18,8 +18,7 @@
 
 // A stream's targets: TARGETS_MAX, holding at most LISTEN_BYTES of paths together. A request's writes: WRITES_MAX (the
 // game sends a handful; each looks its path up among the session's documents).
-enum { TARGETS_MAX = 32, LISTEN_BYTES = 16 << 10, WRITES_MAX = 1024, GS_TOKEN_S = 3600,
-       RECONNECT_GRACE_MS = 15000 };
+enum { TARGETS_MAX = 32, LISTEN_BYTES = 16 << 10, WRITES_MAX = 1024, GS_TOKEN_S = 3600 };
 enum { DC_ADDED = 1, DC_MODIFIED = 2, DC_REMOVED = 3 };                  // DocumentChange kinds
 enum { TC_ADDED = 1, TC_CURRENT = 2, TC_REMOVED = 3, TC_ERROR = 4 };    // TargetChange states
 
@@ -336,6 +335,7 @@ static void listen_msg(SrvCall *c, const uint8_t *msg, size_t len) {
             L->bound = 1;
             snprintf(L->session, sizeof L->session, "%s", s->id);
             s->listeners++;
+            s->ever_listened = 1;
             SrvMember *m = srv_member(s, L->uid);
             if (m) {
                 m->streams++;
@@ -546,10 +546,10 @@ static void listen_close(SrvCall *c) {
                 srv_session_leave(s, L->uid);   // rooms only: matchmade members stay
             } else {
                 uint64_t now = srv_ms();
-                m->reconnect_deadline_ms = now > UINT64_MAX - RECONNECT_GRACE_MS
-                                         ? UINT64_MAX : now + RECONNECT_GRACE_MS;
+                m->reconnect_deadline_ms = now > UINT64_MAX - GAMESYNC_RECONNECT_GRACE_MS
+                                         ? UINT64_MAX : now + GAMESYNC_RECONNECT_GRACE_MS;
                 srv_log("gamesync grace session=%s member=%s %d ms for reconnect",
-                        s->id, L->uid, RECONNECT_GRACE_MS);
+                        s->id, L->uid, GAMESYNC_RECONNECT_GRACE_MS);
             }
         }
     }
