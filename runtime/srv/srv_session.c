@@ -824,6 +824,18 @@ static SrvSession *backfill_target(const Ticket *t) {
     return NULL;
 }
 
+// An open Gamesync listener means this user is still in a live peer group.
+// Keep any extra ticket searching until the old stream goes away; otherwise
+// the 15-second solo fallback can split an actively racing player into a
+// second lobby even if we correctly reject an immediate reattachment.
+static int active_gamesync_peer(const char *uid) {
+    for (int i = 0; i < nsessions; i++) {
+        SrvMember *m = srv_member(sessions[i], uid);
+        if (m && m->streams) return 1;
+    }
+    return 0;
+}
+
 // A player who lost their online race and re-enters matchmaking may still
 // own an existing member slot in the session their peers are using. The old
 // matcher excluded that session from backfill (srv_member != NULL) and, after
@@ -864,7 +876,7 @@ static void match_queue(Ticket **q, int n, uint64_t now) {
     for (int i = 0; i < (alone || ko ? n : ready) && np < size; i++) {
         int dup = 0;   // a player with two tickets is in a session once
         for (int k = 0; k < np && !dup; k++) dup = !strcmp(pick[k]->uid, q[i]->uid);
-        if (!dup) pick[np++] = q[i];
+        if (!dup && !active_gamesync_peer(q[i]->uid)) pick[np++] = q[i];
     }
     if (np < 2 && !alone) return;
     SrvMap attrs;
@@ -919,6 +931,8 @@ static void matcher(uint64_t now) {
     }
     n = by_age(list, T_SEARCHING);
     for (int i = 0; i < n; i++) {   // 3. backfill, oldest ticket first
+        // A live peer must not be backfilled into a second session.
+        if (active_gamesync_peer(list[i]->uid)) continue;
         SrvSession *s = backfill_target(list[i]);
         if (!s || !member_add(s, list[i]->uid, &list[i]->attrs, s->nmembers + 1)) continue;
         docs_end(&s->docs, (int64_t)time(NULL));
