@@ -892,7 +892,7 @@ def test_srv_matchmaking(server: Path, mode: str, rule: int) -> None:
     connected_ticket = ticket(c, tc, "cv7")
     sc = c.sid()
     call(c, sc, MM + "TrackMatchmakingTicket", pb(1, connected_ticket), headers(tc))
-    pump_all([c, d], lambda: len(msgs(c.data[sc])) > 0, 3)
+    pump_all([c, d], lambda: len(msgs(c.data.get(sc, b""))) > 0, 3)
     assert [fields(m)[5][0] for m in msgs(c.data[sc])] == [1], "active peer must not reattach"
     unary(c, MM + "CancelMatchmakingTicket", pb(1, connected_ticket), tc)
     pump_all([c, d], lambda: sc in c.ended, 3)
