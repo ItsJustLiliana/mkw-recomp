@@ -856,7 +856,14 @@ static SrvSession *returning_target(const Ticket *t) {
             strcmp(s->batching, t->batching))
             continue;
         SrvMember *m = srv_member(s, t->uid);
-        if (!m || (*t->build && *m->build && strcmp(t->build, m->build))) continue;
+        // The log showed repeated reattachment to gs-0001 with grace=0
+        // after intentional KeepUserSession closures. Those were fresh
+        // matchmaking attempts, NOT transport reconnects. Only reuse an
+        // already-entered member during an actual unexpected-close grace.
+        // A reserved seat that has never opened its stream can still join.
+        if (!m || (m->ever_streamed && (!m->reconnect_deadline_ms ||
+                   srv_ms() >= m->reconnect_deadline_ms)) ||
+            (*t->build && *m->build && strcmp(t->build, m->build))) continue;
         if (!best || m->seq > newest) best = s, newest = m->seq;
     }
     return best;
