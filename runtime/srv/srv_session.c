@@ -808,7 +808,11 @@ static int session_accepting(const SrvSession *s) {
 static SrvSession *backfill_target(const Ticket *t) {
     for (int i = 0; i < nsessions; i++) {
         SrvSession *s = sessions[i];
-        if (s->room || s->closed || !s->nmembers || strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
+        // Historical __pgn participation documents can outlive every listener.
+        // Never backfill into an abandoned game session merely because a stale
+        // document still advertises ebf=true; that strand creates ghost lobbies.
+        if (s->room || s->closed || !s->listeners || !s->nmembers ||
+            strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
             strcmp(s->batching, t->batching) || srv_member(s, t->uid))
             continue;
         if (!session_accepting(s)) continue;
@@ -818,6 +822,29 @@ static SrvSession *backfill_target(const Ticket *t) {
         if (ok) return s;
     }
     return NULL;
+}
+
+// A player who lost their online race and re-enters matchmaking may still
+// own an existing member slot in the session their peers are using. The old
+// matcher excluded that session from backfill (srv_member != NULL) and, after
+// solo_after, created a second lobby instead. Reuse the SAME member/credentials
+// without adding another __us, changing station numbers, or interrupting peers.
+// This is a backend reattach only: a running game's Pia state might still reject
+// a mid-race join. Other lobbies and new players are unaffected.
+static SrvSession *returning_target(const Ticket *t) {
+    SrvSession *best = NULL;
+    uint64_t newest = 0;
+    for (int i = 0; i < nsessions; i++) {
+        SrvSession *s = sessions[i];
+        if (s->room || s->closed || !s->listeners ||
+            strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
+            strcmp(s->batching, t->batching))
+            continue;
+        SrvMember *m = srv_member(s, t->uid);
+        if (!m || (*t->build && *m->build && strcmp(t->build, m->build))) continue;
+        if (!best || m->seq > newest) best = s, newest = m->seq;
+    }
+    return best;
 }
 
 // One queue (oldest first): a session once two tickets are ready, or one has waited alone long enough; Knockout
@@ -865,7 +892,21 @@ static void matcher(uint64_t now) {
         if (tickets[i].used && tickets[i].state == T_PLACING && now - tickets[i].placed_ms >= PLACING_MS)
             tickets[i].state = T_SUCCEEDED;
     int n = by_age(list, T_SEARCHING);
-    for (int i = 0; i < n; i++) {   // 2. backfill, oldest ticket first
+    // 2. Reattach returning members before ordinary backfill or solo creation.
+    // This preserves the old lobby while its other members are still online,
+    // instead of splitting players between gs-N and gs-N+1 on reconnect.
+    for (int i = 0; i < n; i++) {
+        Ticket *t = list[i];
+        SrvSession *s = returning_target(t);
+        if (!s) continue;
+        SrvMember *m = srv_member(s, t->uid);
+        if (!m) continue;
+        m->seq = ++member_seq;
+        placed(t, s, now);
+        srv_log("returning player reattached to %s (members=%d listeners=%d)", s->id, s->nmembers, s->listeners);
+    }
+    n = by_age(list, T_SEARCHING);
+    for (int i = 0; i < n; i++) {   // 3. backfill, oldest ticket first
         SrvSession *s = backfill_target(list[i]);
         if (!s || !member_add(s, list[i]->uid, &list[i]->attrs, s->nmembers + 1)) continue;
         docs_end(&s->docs, (int64_t)time(NULL));
@@ -873,7 +914,7 @@ static void matcher(uint64_t now) {
         srv_log("a player joined %s in progress (%d in it)", s->id, s->nmembers);
         srv_gs_changed(s, 1);
     }
-    n = by_age(list, T_SEARCHING);   // 3. new sessions, per (game, config, batching key), then per build
+    n = by_age(list, T_SEARCHING);   // 4. new sessions, per (game, config, batching key), then per build
     memset(grouped, 0, sizeof grouped);
     for (int i = 0; i < n; i++) {
         if (grouped[i] || list[i]->state != T_SEARCHING) continue;
