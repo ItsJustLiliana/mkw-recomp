@@ -14,7 +14,7 @@
 #include "srv_value.h"
 
 // Gamesync tokens: GS_TOKENS_PER per player and session (a game asks again after an hour), GS_TOKENS_MAX per session.
-enum { SESSIONS_MAX = 256, MEMBERS_MAX = 32, GS_TOKENS_MAX = 128, GS_TOKENS_PER = 4, DEFERMENTS_MAX = 128,
+enum { GAMESYNC_RECONNECT_GRACE_MS = 15000, SESSIONS_MAX = 256, MEMBERS_MAX = 32, GS_TOKENS_MAX = 128, GS_TOKENS_PER = 4, DEFERMENTS_MAX = 128,
        DEFERMENT_BYTES = 64 << 10, DEFERMENTS_BYTES = 1 << 20 };
 
 typedef struct {
