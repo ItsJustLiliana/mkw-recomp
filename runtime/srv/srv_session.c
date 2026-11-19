@@ -43,6 +43,28 @@ static Ticket tickets[TICKETS_MAX];
 static unsigned next_gs, next_mt, next_gct, next_ice;
 static uint64_t member_seq;
 
+// Low-overhead capacity snapshot once a minute. One server hosts many
+// independent sessions; reporting totals identifies growth and saturation
+// without logging every participant or packet in a 24-player race.
+static void capacity_snapshot(void) {
+    int members = 0, listeners = 0, rooms = 0, matchmaking = 0, active = 0;
+    int largest = 0, searching = 0;
+    for (int i = 0; i < nsessions; i++) {
+        const SrvSession *s = sessions[i];
+        members += s->nmembers;
+        listeners += s->listeners;
+        if (s->room) rooms++;
+        else matchmaking++;
+        if (s->listeners) active++;
+        if (s->nmembers > largest) largest = s->nmembers;
+    }
+    for (int i = 0; i < TICKETS_MAX; i++)
+        if (tickets[i].used && tickets[i].state == T_SEARCHING) searching++;
+    srv_log("capacity: sessions=%d/%d active=%d rooms=%d matchmaking=%d members=%d listeners=%d largest=%d/%d searching=%d/%d",
+            nsessions, SESSIONS_MAX, active, rooms, matchmaking, members, listeners,
+            largest, MEMBERS_MAX, searching, TICKETS_MAX);
+}
+
 static int final_state(int st) { return st >= T_SUCCEEDED && st != T_ACCEPTING; }
 
 // A string field as a C string, cut to cap; "" when absent.
@@ -891,7 +913,7 @@ static void session_drop(int i) {
 }
 
 void srv_session_tick(uint64_t now) {
-    static uint64_t last, last_abandon;
+    static uint64_t last, last_abandon, last_capacity;
     if (last && now - last < MATCH_MS) return;
     last = now;
     matcher(now);
@@ -916,6 +938,10 @@ void srv_session_tick(uint64_t now) {
         srv_gs_tick(sessions[i], now);
         referee_tick(&sessions[i]->referee, &sessions[i]->docs, now, (int64_t)time(NULL));
         if (sessions[i]->docs.nchanged) srv_gs_changed(sessions[i], 0);
+    }
+    if (!last_capacity || now < last_capacity || now - last_capacity >= 60000) {
+        capacity_snapshot();
+        last_capacity = now;
     }
 }
 
