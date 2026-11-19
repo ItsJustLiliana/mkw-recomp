@@ -130,6 +130,12 @@ jobs:
       # The self-tests (--probe-*) need the game set up: the runtime claims the game's address space first.
       - name: Runtime and launcher (no game)
         run: uv run tools/build/build.py --dist --runtime-only --sysroot build/sysroot
+      # The ordinary pytest runs skip the live Gamesync/matchmaking flow unless
+      # MKW_SRV_EXE is set. Exercise the real standalone server for rejoin PRs.
+      - name: Standalone matchmaking integration (no game)
+        run: |
+          uv run tools/build/server.py --jobs 4
+          MKW_SRV_EXE="$PWD/build/server/mkw-server" uv run pytest tests/runtime/test_srv.py -q
 
   linux-aarch64:
     needs: changes
