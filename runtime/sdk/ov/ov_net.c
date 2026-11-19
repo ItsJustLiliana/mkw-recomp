@@ -338,6 +338,8 @@ typedef struct {
     int semaphore;
     uint64_t udp_tx_packets, udp_rx_packets, udp_tx_bytes, udp_rx_bytes;
     uint32_t udp_errors;
+    uint64_t udp_tx_last_ns, udp_rx_last_ns; // last successful packet for opt-in stall diagnostics
+    uint32_t udp_tx_gaps, udp_rx_gaps;       // capped logging; does not affect socket behavior
     struct { uint32_t level, name, len; uint8_t v[16]; } opt[GFD_OPTS];   // set options, read back as set (gRPC)
     int nopt;
 } GFd;
@@ -377,6 +379,21 @@ static void udp_log_io(GFd *f, int fd, int tx, long n, int err) {
     }
     uint64_t packets = __atomic_add_fetch(tx ? &f->udp_tx_packets : &f->udp_rx_packets, 1, __ATOMIC_RELAXED);
     uint64_t bytes = __atomic_add_fetch(tx ? &f->udp_tx_bytes : &f->udp_rx_bytes, (uint64_t)n, __ATOMIC_RELAXED);
+    // A 24-player race can look healthy by packet totals while a single long
+    // receive gap causes Pia to discard a peer. Report gaps on RESUME only:
+    // no packets are consumed, delayed, re-ordered or synthesized here.
+    uint64_t now = plat_now_ns();
+    uint64_t *last = tx ? &f->udp_tx_last_ns : &f->udp_rx_last_ns;
+    uint64_t previous = __atomic_exchange_n(last, now, __ATOMIC_RELAXED);
+    if (previous && now > previous && now - previous >= 750000000ull && packets > 128) {
+        uint32_t *count = tx ? &f->udp_tx_gaps : &f->udp_rx_gaps;
+        uint32_t k = __atomic_add_fetch(count, 1, __ATOMIC_RELAXED);
+        if (k <= 16 || (k % 64) == 0)
+            rt_log("net-udp: fd=%d %s resumed after %llu ms silence (packets=%llu gap=%u)",
+                   fd, tx ? "tx" : "rx",
+                   (unsigned long long)((now - previous) / 1000000ull),
+                   (unsigned long long)packets, k);
+    }
     if (packets == 1 || packets % 256 == 0)
         rt_log("net-udp: fd=%d %s packets=%llu bytes=%llu", fd, tx ? "tx" : "rx",
                (unsigned long long)packets, (unsigned long long)bytes);
@@ -507,8 +524,14 @@ static void ov_socket(Cpu *c) {
         // No per-packet buffering in the lifted game: allow short scheduling
         // stalls (e.g. a slower GPU) without losing incoming race updates.
         int size = P2P_UDP_RCVBUF;
-        if (setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&size, sizeof size) != 0 && udp_trace())
-            rt_log("net-udp: receive buffer request failed on fd=%d (host error=%d)", fd, WSAGetLastError());
+        int rc = setsockopt(s, SOL_SOCKET, SO_RCVBUF, (const char *)&size, sizeof size);
+        if (udp_trace()) {
+            int actual = 0, actual_len = sizeof actual;
+            int queried = getsockopt(s, SOL_SOCKET, SO_RCVBUF, (char *)&actual, &actual_len);
+            rt_log("net-udp: fd=%d receive buffer requested=%d actual=%d set_error=%d query_error=%d",
+                   fd, size, queried ? 0 : actual, rc ? WSAGetLastError() : 0,
+                   queried ? WSAGetLastError() : 0);
+        }
     }
 #endif
     if (nonblock) host_nonblock(s, 1);
@@ -528,6 +551,18 @@ static void ov_close(Cpu *c) {
     if (f) f->kind = FD_FREE;
     plat_mutex_unlock(&fd_lock);
     if (!f) return ret_fail(c, G_EBADF);
+    if (udp_trace() && f->kind == FD_FREE && f->type == 2) {
+        uint64_t now = plat_now_ns();
+        uint64_t tx = __atomic_load_n(&f->udp_tx_packets, __ATOMIC_RELAXED);
+        uint64_t rx = __atomic_load_n(&f->udp_rx_packets, __ATOMIC_RELAXED);
+        uint64_t last_rx = __atomic_load_n(&f->udp_rx_last_ns, __ATOMIC_RELAXED);
+        uint64_t last_tx = __atomic_load_n(&f->udp_tx_last_ns, __ATOMIC_RELAXED);
+        rt_log("net-udp: fd=%d closed tx=%llu rx=%llu rx_idle_ms=%llu tx_idle_ms=%llu gaps_rx=%u gaps_tx=%u errors=%u",
+               fd, (unsigned long long)tx, (unsigned long long)rx,
+               (unsigned long long)(last_rx && now >= last_rx ? (now - last_rx) / 1000000ull : 0),
+               (unsigned long long)(last_tx && now >= last_tx ? (now - last_tx) / 1000000ull : 0),
+               f->udp_rx_gaps, f->udp_tx_gaps, f->udp_errors);
+    }
     if (s != HOST_BAD) host_close(s);
     if (w != HOST_BAD) host_close(w);
     ret_x(c, 0);
@@ -1059,6 +1094,15 @@ static void ov_poll(Cpu *c) {
         if (re & POLLERR) g |= 0x8;
         if (re & POLLHUP) g |= 0x10;
         if (re & POLLNVAL) g |= 0x20;
+        // Log unusual poll state without querying SO_ERROR (which can clear
+        // a pending error) or changing the readiness reported to the guest.
+        if (udp_trace() && (g & (0x8 | 0x10 | 0x20))) {
+            static volatile uint32_t unusual;
+            uint32_t occurrence = __atomic_add_fetch(&unusual, 1, __ATOMIC_RELAXED);
+            if (occurrence <= 32 || occurrence % 128 == 0)
+                rt_log("net-poll: fd=%d guest_events=%#x guest_revents=%#x host_revents=%#x count=%u",
+                       *(int32_t *)(pf + 8 * map[k]), ev, g, (unsigned)re, occurrence);
+        }
         *(uint16_t *)(pf + 8 * map[k] + 6) = g;
         if (g) ready++;
     }
