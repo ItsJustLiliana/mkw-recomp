@@ -372,9 +372,13 @@ static int udp_recvbuf_wanted(int requested, int type) {
 static void udp_log_io(GFd *f, int fd, int tx, long n, int err) {
     if (!udp_trace() || !f || f->type != 2) return;
     if (n < 0) {
+        // Non-blocking sockets normally report EAGAIN/WOULDBLOCK thousands
+        // of times per race. Do not count these polls as UDP socket failures:
+        // the huge 'errors=99015' counters from Nov 19 obscured real faults.
+        if (err == G_EAGAIN || err == G_EINTR) return;
         uint32_t count = __atomic_add_fetch(&f->udp_errors, 1, __ATOMIC_RELAXED);
-        if (err != G_EAGAIN && (count <= 12 || count % 128 == 0))
-            rt_log("net-udp: fd=%d %s error=%d (socket error #%u)", fd, tx ? "send" : "recv", err, count);
+        if (count <= 12 || count % 128 == 0)
+            rt_log("net-udp: fd=%d %s error=%d (nontransient socket error #%u)", fd, tx ? "send" : "recv", err, count);
         return;
     }
     uint64_t packets = __atomic_add_fetch(tx ? &f->udp_tx_packets : &f->udp_rx_packets, 1, __ATOMIC_RELAXED);
