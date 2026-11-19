@@ -910,7 +910,7 @@ static void matcher(uint64_t now) {
         // interval before running its deferred participation deletion. The
         // deadline remains bounded and is cleared when the new stream opens.
         if (m->reconnect_deadline_ms) {
-            const uint64_t grace = GAMESYNC_RECONNECT_GRACE_MS
+            const uint64_t grace = GAMESYNC_RECONNECT_GRACE_MS;
             m->reconnect_deadline_ms = now > UINT64_MAX - grace ? UINT64_MAX : now + grace;
         }
         placed(t, s, now);
