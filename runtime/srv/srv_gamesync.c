@@ -335,6 +335,7 @@ static void listen_msg(SrvCall *c, const uint8_t *msg, size_t len) {
             L->bound = 1;
             snprintf(L->session, sizeof L->session, "%s", s->id);
             s->listeners++;
+            s->ever_listened = 1;
             SrvMember *m = srv_member(s, L->uid);
             if (m) {
                 m->streams++;
