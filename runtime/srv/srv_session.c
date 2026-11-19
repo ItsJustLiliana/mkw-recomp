@@ -811,7 +811,10 @@ static SrvSession *backfill_target(const Ticket *t) {
         // Historical __pgn participation documents can outlive every listener.
         // Never backfill into an abandoned game session merely because a stale
         // document still advertises ebf=true; that strand creates ghost lobbies.
-        if (s->room || s->closed || !s->listeners || !s->nmembers ||
+        // Admit newcomers during initial loading before the first stream,
+        // but never put them in a previously established lobby after its
+        // final listener has gone. Preserve 24-player initial backfill.
+        if (s->room || s->closed || (!s->listeners && s->ever_listened) || !s->nmembers ||
             strcmp(s->tenant, t->tenant) || strcmp(s->config, t->config) ||
             strcmp(s->batching, t->batching) || srv_member(s, t->uid))
             continue;
