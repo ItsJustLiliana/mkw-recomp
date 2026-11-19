@@ -25,6 +25,7 @@ typedef struct {
     char credential[TOKEN_MAX];   // the member entry's credential, asked back by Gamesync IssueToken
     uint64_t seq;     // when they were matched into, created or joined it: a player's most recent session
     int streams;      // their Gamesync listen streams open on it
+    int ever_streamed; // distinguishes a pre-join seat from an explicitly departed racer
     uint64_t reconnect_deadline_ms; // unexpected last-stream close: delay deferred departure for reconnection
 } SrvMember;
 
