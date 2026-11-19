@@ -103,6 +103,21 @@ def server(tmp_path_factory: pytest.TempPathFactory) -> Iterator[Path]:
         srv.wait()
 
 
+def test_srv_capacity_snapshot(server: Path) -> None:
+    """The same process reports its aggregate capacity across independent lobbies."""
+    log = server / "logs/server.log"
+    deadline = time.monotonic() + 3
+    while time.monotonic() < deadline:
+        if "capacity: sessions=" in log.read_text(errors="replace"):
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("server did not publish its initial lobby capacity snapshot")
+    snapshot = next(line for line in log.read_text().splitlines() if "capacity: sessions=" in line)
+    assert "sessions=0/256" in snapshot
+    assert "members=0" in snapshot and "listeners=0" in snapshot
+
+
 def test_srv_stun_over_udp(server: Path) -> None:
     """A STUN binding request to 3478 and 3479 comes back with the address and port the server saw."""
     with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
