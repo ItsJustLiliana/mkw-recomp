@@ -135,7 +135,7 @@ jobs:
       - name: Standalone matchmaking integration (no game)
         run: |
           uv run tools/build/server.py --jobs 4
-          MKW_SRV_EXE="$PWD/build/server/mkw-server" uv run pytest tests/runtime/test_srv.py -q
+          MKW_SRV_EXE="$PWD/build/server/mkw-server" uv run pytest tests/runtime/test_srv.py -q -n 0
 
   linux-aarch64:
     needs: changes
