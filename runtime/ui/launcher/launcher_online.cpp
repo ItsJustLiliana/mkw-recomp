@@ -452,7 +452,8 @@ void online_page(float scale, float bottom) {
             cfg_set("MKW_SEQ_WATCH", enabled ? "1" : "0");
             cfg_save();
         }
-        ImGui::TextWrapped("When enabled, the next Play records network socket failures, UDP traffic and game phase changes in the normal mkw.log. Turn this off after testing.");
+        ImGui::TextWrapped("When enabled, the next Play records UDP packet gaps, effective receive buffer size, socket/poll errors and game phase changes in mkw.log. Turn this off after testing.");
+        ImGui::TextDisabled("For game-phase traces, first run Set up again on this PC if the log says 'seq: ... watch off'.");
         ImGui::TextDisabled("No game files are changed. Restart through Play for the setting to take effect.");
     }
     if (ImGui::CollapsingHeader(menu_text(UI_ONLINE_HOWTO))) {
